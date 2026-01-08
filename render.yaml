@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: coordi-api
+    runtime: node
+    rootDir: apps/api
+    buildCommand: npm install && npm run build && npm run prisma:generate && npx prisma migrate deploy --schema=./prisma/schema.prisma
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: coordidb
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_NUMBER
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        value: https://coordi-web.onrender.com
+      - key: TWILIO_STREAM_URL
+        value: wss://coordi-api.onrender.com/call
+
+  - type: web
+    name: coordi-web
+    runtime: node
+    rootDir: apps/web
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_URL
+        value: https://coordi-api.onrender.com
+
+databases:
+  - name: coordidb
+    databaseName: coordi
+    user: coordi
+    plan: free
+
+

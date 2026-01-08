@@ -1,0 +1,134 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id              String    @id @default(uuid())
+  name            String
+  twilioNumber    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  users           User[]
+  agentProfile    AgentProfile?
+  businessProfile BusinessProfile?
+  calls           Call[]
+  leads           Lead[]
+  integrations    Integration?
+}
+
+model User {
+  id             String       @id @default(uuid())
+  email          String       @unique
+  passwordHash   String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  role           String       @default("owner")
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+model AgentProfile {
+  id                      String       @id @default(uuid())
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId          String       @unique
+  voice                   String       @default("alloy")
+  tone                    Int          @default(50) // 0=casual, 100=formal
+  pace                    Int          @default(50) // 0=slow, 100=fast
+  confidence              Int          @default(50) // 0=tentative, 100=authoritative
+  energy                  Int          @default(50) // 0=calm, 100=enthusiastic
+  fillerLevel             Int          @default(50) // 0=none, 100=frequent
+  interruptionSensitivity Int          @default(50) // 0=low, 100=high
+  empathyLevel            Int          @default(50) // 0=matter-of-fact, 100=very empathetic
+  formality               Int          @default(50) // 0=casual, 100=formal
+  welcomePrompt           String       @default("")
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+model BusinessProfile {
+  id             String       @id @default(uuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String       @unique
+  companyName    String
+  description    String?
+  serviceAreas   String?      // JSON or text
+  servicesOffered String?     // JSON array or text
+  pricingInfo    String?      // Text description
+  policies       String?      // Text
+  faq            String?      // JSON array of Q&A or text
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+model Call {
+  id            String       @id @default(uuid())
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+  fromNumber    String
+  toNumber      String
+  twilioCallSid String?      @unique
+  startTime     DateTime     @default(now())
+  endTime       DateTime?
+  durationSeconds Int?
+  outcome       String?      // lead_captured, missed, transferred, etc.
+  recordingUrl  String?
+  transcript    String?
+  summary       String?
+  lead          Lead?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([startTime])
+}
+
+model Lead {
+  id              String       @id @default(uuid())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId  String
+  call            Call?        @relation(fields: [callId], references: [id])
+  callId          String?
+  name            String?
+  phone           String?
+  email           String?
+  address         String?
+  serviceRequested String?
+  scheduledDate   DateTime?
+  status          String       @default("new") // new, in_progress, converted, etc.
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([callId])
+}
+
+model Integration {
+  id              String       @id @default(uuid())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId  String       @unique
+  calendlyLink    String?
+  zapierHookUrl   String?
+  emergencyNumber String?      // For human escalation
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+
+
