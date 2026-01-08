@@ -4,22 +4,18 @@ import { handleToolCall } from "../tools/index.js";
 import type { CallSession, TwilioMediaStreamMessage } from "./types.js";
 import type WebSocket from "ws";
 
-interface SocketStream {
-  socket: WebSocket;
-}
-
 export class TwilioStreamHandler {
-  private socket: SocketStream;
+  private socket: WebSocket;
   private callSession: CallSession | null = null;
   private openAIBridge: OpenAIBridge | null = null;
 
-  constructor(socket: SocketStream) {
+  constructor(socket: WebSocket) {
     this.socket = socket;
     this.setupHandlers();
   }
 
   private setupHandlers() {
-    this.socket.socket.on("message", async (message: Buffer) => {
+    this.socket.on("message", async (message: Buffer) => {
       try {
         const data = JSON.parse(message.toString()) as TwilioMediaStreamMessage;
         await this.handleMessage(data);
@@ -28,11 +24,11 @@ export class TwilioStreamHandler {
       }
     });
 
-    this.socket.socket.on("close", async () => {
+    this.socket.on("close", async () => {
       await this.cleanup();
     });
 
-    this.socket.socket.on("error", (error: Error) => {
+    this.socket.on("error", (error: Error) => {
       console.error("WebSocket error:", error);
       this.cleanup();
     });
@@ -75,7 +71,7 @@ export class TwilioStreamHandler {
 
     if (!org) {
       console.error("Organization not found for call");
-      this.socket.socket.close();
+      this.socket.close();
       return;
     }
 
@@ -108,7 +104,7 @@ export class TwilioStreamHandler {
       this.openAIBridge = new OpenAIBridge(this.callSession, org.id);
       
       // Pass Twilio socket reference to bridge so it can send audio back
-      this.openAIBridge.setTwilioSocket(this.socket.socket);
+      this.openAIBridge.setTwilioSocket(this.socket);
       
       // Set up tool call handler
       this.openAIBridge.onToolCallCallback(async (toolCall) => {
@@ -175,8 +171,8 @@ export class TwilioStreamHandler {
   }
 
   private sendTwilioMessage(message: any) {
-    if (this.socket.socket.readyState === this.socket.socket.OPEN) {
-      this.socket.socket.send(JSON.stringify(message));
+    if (this.socket.readyState === this.socket.OPEN) {
+      this.socket.send(JSON.stringify(message));
     }
   }
 
@@ -223,8 +219,8 @@ export class TwilioStreamHandler {
     }
 
     // Close WebSocket
-    if (this.socket.socket.readyState === this.socket.socket.OPEN) {
-      this.socket.socket.close();
+    if (this.socket.readyState === this.socket.OPEN) {
+      this.socket.close();
     }
   }
 

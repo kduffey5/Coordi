@@ -74,10 +74,27 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
       const organizationId = request.organizationId!;
       const body = BusinessProfileUpdateSchema.parse(request.body);
 
+      // For create, only include defined values (Prisma doesn't accept undefined)
+      const createData: Partial<typeof body> = {};
+      for (const [key, value] of Object.entries(body)) {
+        if (value !== undefined) {
+          createData[key as keyof typeof body] = value;
+        }
+      }
+
       const profile = await prisma.businessProfile.upsert({
         where: { organizationId },
         update: body,
-        create: { organizationId, ...body },
+        create: { 
+          organizationId,
+          companyName: createData.companyName ?? "",
+          description: createData.description ?? "",
+          serviceAreas: createData.serviceAreas ?? "",
+          servicesOffered: createData.servicesOffered ?? "",
+          pricingInfo: createData.pricingInfo ?? "",
+          policies: createData.policies ?? "",
+          faq: createData.faq ?? "",
+        },
       });
 
       return profile;
