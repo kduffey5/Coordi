@@ -9,10 +9,28 @@ export class TwilioStreamHandler {
   private callSession: CallSession | null = null;
   private openAIBridge: OpenAIBridge | null = null;
 
-  constructor(socket: WebSocket) {
-    this.socket = socket;
+  constructor(socket: WebSocket | any) {
+    // Validate socket exists and has required methods
+    if (!socket) {
+      throw new Error("Socket is required");
+    }
+    
+    // If socket has a socket property (SocketStream), use that
+    // Otherwise, use the socket directly
+    this.socket = socket.socket || socket;
+    
+    if (!this.socket || typeof this.socket.on !== "function") {
+      console.error("Invalid socket object:", {
+        socketType: typeof socket,
+        socketKeys: socket ? Object.keys(socket) : [],
+        hasSocketProperty: !!socket?.socket,
+        socketSocketType: typeof socket?.socket,
+      });
+      throw new Error("Invalid socket: missing 'on' method");
+    }
+    
+    console.log("TwilioStreamHandler initialized with valid socket. Waiting for 'start' event.");
     this.setupHandlers();
-    console.log("TwilioStreamHandler initialized. Waiting for 'start' event.");
   }
 
   private setupHandlers() {
