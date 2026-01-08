@@ -1,22 +1,22 @@
-import { SocketStream } from "@fastify/websocket";
 import { prisma } from "../config/database.js";
 import { OpenAIBridge } from "./openaiBridge.js";
 import { handleToolCall } from "../tools/index.js";
 import type { CallSession, TwilioMediaStreamMessage } from "./types.js";
+import type WebSocket from "ws";
 
 export class TwilioStreamHandler {
-  private socket: SocketStream;
+  private socket: WebSocket;
   private callSession: CallSession | null = null;
   private openAIBridge: OpenAIBridge | null = null;
 
-  constructor(socket: SocketStream) {
+  constructor(socket: WebSocket) {
     this.socket = socket;
     this.setupHandlers();
+    console.log("TwilioStreamHandler initialized. Waiting for 'start' event.");
   }
 
   private setupHandlers() {
-    // SocketStream has a .socket property which is the actual WebSocket
-    this.socket.socket.on("message", async (message: Buffer) => {
+    this.socket.on("message", async (message: Buffer) => {
       try {
         const data = JSON.parse(message.toString()) as TwilioMediaStreamMessage;
         await this.handleMessage(data);
@@ -25,38 +25,51 @@ export class TwilioStreamHandler {
       }
     });
 
-    this.socket.socket.on("close", async () => {
+    this.socket.on("close", async () => {
+      console.log("Twilio stream closed.");
       await this.cleanup();
     });
 
-    this.socket.socket.on("error", (error: Error) => {
-      console.error("WebSocket error:", error);
+    this.socket.on("error", (error: Error) => {
+      console.error("Twilio WebSocket error:", error);
       this.cleanup();
     });
   }
 
   private async handleMessage(data: TwilioMediaStreamMessage) {
-    switch (data.event) {
-      case "start":
-        await this.handleStart(data);
-        break;
+    try {
+      console.log("Twilio message received:", data.event);
+      switch (data.event) {
+        case "start":
+          console.log("Twilio stream started.");
+          await this.handleStart(data);
+          break;
 
-      case "media":
-        await this.handleMedia(data);
-        break;
+        case "media":
+          await this.handleMedia(data);
+          break;
 
-      case "stop":
-        await this.handleStop(data);
-        break;
+        case "stop":
+          console.log("Twilio stream stopped.");
+          await this.handleStop(data);
+          break;
 
-      case "connected":
-        // Connection confirmed
-        break;
+        case "connected":
+          console.log("Twilio stream connected.");
+          // Connection confirmed
+          break;
 
-      case "error":
-        console.error("Twilio stream error:", data);
-        await this.cleanup();
-        break;
+        case "error":
+          console.error("Twilio stream error:", data);
+          await this.cleanup();
+          break;
+
+        default:
+          console.log("Unhandled Twilio message event:", data.event);
+          break;
+      }
+    } catch (error) {
+      console.error("Error handling Twilio message:", error);
     }
   }
 
@@ -74,7 +87,7 @@ export class TwilioStreamHandler {
     
     if (!org) {
       console.error("Organization not found for call");
-      this.socket.socket.close();
+      this.socket.close();
       return;
     }
     
@@ -110,8 +123,7 @@ export class TwilioStreamHandler {
       this.openAIBridge = new OpenAIBridge(this.callSession, org.id);
       
       // Pass Twilio socket reference to bridge so it can send audio back
-      // SocketStream has a .socket property which is the actual WebSocket
-      this.openAIBridge.setTwilioSocket(this.socket.socket);
+      this.openAIBridge.setTwilioSocket(this.socket);
       
       console.log("OpenAI bridge created, initializing...");
       
@@ -186,11 +198,11 @@ export class TwilioStreamHandler {
   }
 
   private sendTwilioMessage(message: any) {
-    if (this.socket.socket.readyState === this.socket.socket.OPEN) {
-      this.socket.socket.send(JSON.stringify(message));
+    if (this.socket.readyState === 1) { // WebSocket.OPEN === 1
+      this.socket.send(JSON.stringify(message));
       console.log("Sent message to Twilio:", message.event);
     } else {
-      console.warn("Twilio socket not ready, state:", this.socket.socket.readyState);
+      console.warn("Cannot send message to Twilio - socket not open.");
     }
   }
 
@@ -237,8 +249,9 @@ export class TwilioStreamHandler {
     }
 
     // Close WebSocket
-    if (this.socket.socket.readyState === this.socket.socket.OPEN) {
-      this.socket.socket.close();
+    if (this.socket.readyState === 1) { // WebSocket.OPEN === 1
+      this.socket.close();
+      console.log("Twilio WebSocket closed.");
     }
   }
 

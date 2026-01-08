@@ -48,8 +48,9 @@ fastify.register(twilioRoutes, { prefix: "/twilio" });
 // WebSocket endpoint for Twilio Media Streams
 import { TwilioStreamHandler } from "./twilio/streamHandler.js";
 
-fastify.get("/call", { websocket: true }, (connection, req) => {
-  new TwilioStreamHandler(connection);
+fastify.get("/call", { websocket: true }, (connection: any, req) => {
+  // Fastify's websocket plugin passes a SocketStream, we need the raw WebSocket
+  new TwilioStreamHandler(connection.socket);
 });
 
 const start = async () => {
