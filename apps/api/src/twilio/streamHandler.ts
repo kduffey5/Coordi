@@ -84,10 +84,23 @@ export class TwilioStreamHandler {
   }
 
   private async handleStart(data: TwilioMediaStreamMessage) {
-    console.log("Twilio stream started:", { callSid: data.callSid, streamSid: data.streamSid });
+    // Log full data structure for debugging
+    console.log("Twilio stream start event - full data:", JSON.stringify(data, null, 2));
     
-    if (!data.callSid || !data.streamSid) {
-      console.error("Missing callSid or streamSid in start event");
+    // Get callSid from data.callSid or customParameters.CallSid
+    // Twilio provides it directly in some cases, or we get it from custom parameters we sent
+    const callSid = data.callSid || data.customParameters?.CallSid;
+    const streamSid = data.streamSid;
+    
+    console.log("Twilio stream started:", { callSid, streamSid, customParams: data.customParameters });
+    
+    if (!callSid || !streamSid) {
+      console.error("Missing callSid or streamSid in start event", {
+        callSid: !!callSid,
+        streamSid: !!streamSid,
+        hasCustomParams: !!data.customParameters,
+        customParamKeys: data.customParameters ? Object.keys(data.customParameters) : [],
+      });
       return;
     }
 
@@ -104,10 +117,10 @@ export class TwilioStreamHandler {
     console.log("Organization found:", org.id, org.name);
 
 
-    // Create call session
+    // Create call session (use the extracted callSid)
     this.callSession = {
-      callSid: data.callSid,
-      streamSid: data.streamSid,
+      callSid: callSid,
+      streamSid: streamSid,
       organizationId: org.id,
       startTime: new Date(),
       transcript: [],
@@ -120,10 +133,11 @@ export class TwilioStreamHandler {
           organizationId: org.id,
           fromNumber: data.customParameters?.From || "",
           toNumber: data.customParameters?.To || org.twilioNumber || "",
-          twilioCallSid: data.callSid,
+          twilioCallSid: callSid,
           startTime: new Date(),
         },
       });
+      console.log("Call record created in DB:", callSid);
     } catch (error) {
       console.error("Error creating call record:", error);
     }
@@ -141,7 +155,7 @@ export class TwilioStreamHandler {
       this.openAIBridge.onToolCallCallback(async (toolCall) => {
         return await handleToolCall(toolCall, {
           organizationId: org.id,
-          callSid: data.callSid!,
+          callSid: callSid,
           callerNumber: data.customParameters?.From || "",
         });
       });
