@@ -8,8 +8,9 @@ export class TwilioStreamHandler {
   private socket: WebSocket;
   private callSession: CallSession | null = null;
   private openAIBridge: OpenAIBridge | null = null;
+  private reqUrl: string | undefined;
 
-  constructor(socket: WebSocket) {
+  constructor(socket: WebSocket, req?: any) {
     // In @fastify/websocket v10, the handler receives the WebSocket directly
     if (!socket || typeof socket.on !== "function") {
       console.error("Invalid socket object:", {
@@ -21,6 +22,7 @@ export class TwilioStreamHandler {
     }
     
     this.socket = socket;
+    this.reqUrl = req?.url;
     console.log("TwilioStreamHandler initialized. Waiting for 'start' event.");
     this.setupHandlers();
   }
@@ -101,10 +103,26 @@ export class TwilioStreamHandler {
     
     // Get callSid from multiple possible locations
     // Twilio might provide it in different places depending on version/config
+    // Also check URL query parameters if available
+    let callSidFromUrl: string | undefined;
+    if (this.reqUrl) {
+      try {
+        const url = new URL(this.reqUrl, "https://dummy.com");
+        callSidFromUrl = url.searchParams.get("CallSid") || url.searchParams.get("callSid") || undefined;
+      } catch (e) {
+        // URL parsing failed, ignore
+      }
+    }
+    
     const callSid = data.callSid 
       || data.customParameters?.CallSid 
       || data.customParameters?.callSid
+      || callSidFromUrl
       || (data as any).CallSid; // Sometimes it's capitalized
+    
+    if (callSidFromUrl) {
+      console.log("Found callSid in URL query params:", callSidFromUrl);
+    }
     
     const streamSid = data.streamSid;
     

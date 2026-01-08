@@ -52,9 +52,12 @@ fastify.get("/call", { websocket: true }, (socket: any, req) => {
   // In @fastify/websocket v10, the handler receives the WebSocket directly as the first parameter
   // We can also access the request to get URL query parameters if needed
   try {
-    // Log the request URL in case we need to extract callSid from query params
+    // Log the request URL and query parameters - Twilio might include callSid here
     console.log("WebSocket connection request URL:", req.url);
-    new TwilioStreamHandler(socket);
+    console.log("WebSocket query params:", req.query);
+    
+    // Pass request info to handler in case we need it
+    new TwilioStreamHandler(socket, req);
   } catch (error: any) {
     console.error("Error creating TwilioStreamHandler:", error);
     // Try to close the connection if possible
