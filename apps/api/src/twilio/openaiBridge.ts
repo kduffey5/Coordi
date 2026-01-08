@@ -97,6 +97,7 @@ export class OpenAIBridge {
       ws.on("message", (data: Buffer) => {
         try {
           const message = JSON.parse(data.toString());
+          console.log("OpenAI message received:", message.type);
           this.handleOpenAIMessage(message);
         } catch (error) {
           console.error("Error parsing OpenAI message:", error);
@@ -154,14 +155,31 @@ export class OpenAIBridge {
     // Handle different message types from OpenAI Realtime API
     switch (message.type) {
       case "session.created":
-        console.log("OpenAI session created:", message.session.id);
-        this.callSession.openAISessionId = message.session.id;
+        console.log("OpenAI session created:", message.session?.id);
+        if (message.session?.id) {
+          this.callSession.openAISessionId = message.session.id;
+        }
+        break;
+
+      case "response.created":
+        console.log("OpenAI response created");
+        break;
+
+      case "response.done":
+        console.log("OpenAI response completed");
         break;
 
       case "response.audio.delta":
         // Audio output from AI - send to Twilio
         if (message.delta && this.twilioSocket && this.callSession) {
+          console.log("Received audio delta from OpenAI, sending to Twilio");
           this.sendAudioToTwilio(message.delta);
+        } else {
+          console.warn("Audio delta received but missing required components:", {
+            hasDelta: !!message.delta,
+            hasTwilioSocket: !!this.twilioSocket,
+            hasCallSession: !!this.callSession,
+          });
         }
         break;
 
@@ -245,7 +263,15 @@ export class OpenAIBridge {
 
   private sendToOpenAI(message: any) {
     if (this.session?.ws && this.session.ws.readyState === 1) {
-      this.session.ws.send(JSON.stringify(message));
+      const messageStr = JSON.stringify(message);
+      console.log("Sending to OpenAI:", message.type, messageStr.substring(0, 200));
+      this.session.ws.send(messageStr);
+    } else {
+      console.warn("Cannot send to OpenAI - session not ready:", {
+        hasSession: !!this.session,
+        hasWs: !!this.session?.ws,
+        readyState: this.session?.ws?.readyState,
+      });
     }
   }
 
