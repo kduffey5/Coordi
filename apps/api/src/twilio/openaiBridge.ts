@@ -33,7 +33,17 @@ export class OpenAIBridge {
   }
 
   async initialize() {
+    console.log("OpenAIBridge.initialize() called for org:", this.organizationId);
+    
+    // Check API key first
+    if (!process.env.OPENAI_API_KEY) {
+      const error = "OPENAI_API_KEY environment variable is not set";
+      console.error("❌", error);
+      throw new Error(error);
+    }
+    
     // Get agent profile for system prompt
+    console.log("Fetching agent profile for organization:", this.organizationId);
     const agentProfile = await prisma.agentProfile.findUnique({
       where: { organizationId: this.organizationId },
       include: {
@@ -46,8 +56,16 @@ export class OpenAIBridge {
     });
 
     if (!agentProfile) {
-      throw new Error("Agent profile not found");
+      const error = `Agent profile not found for organization: ${this.organizationId}. You may need to create an agent profile first.`;
+      console.error("❌", error);
+      throw new Error(error);
     }
+    
+    console.log("✅ Agent profile found:", { 
+      id: agentProfile.id, 
+      voice: agentProfile.voice,
+      orgName: agentProfile.organization.name 
+    });
 
     // Build system prompt from agent and business profile
     const systemPrompt = this.buildSystemPrompt(agentProfile);
@@ -350,10 +368,13 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
 
   private async configureSession(agentProfile: any, systemPrompt: string) {
     if (!this.session?.ws || this.session.ws.readyState !== 1) {
+      console.warn("Cannot configure session - WebSocket not ready");
       return;
     }
 
     try {
+      console.log("Configuring OpenAI session...");
+      
       // Send session update to configure the session
       this.sendToOpenAI({
         type: "session.update",
@@ -376,6 +397,8 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           tools: TOOL_SCHEMAS as any,
         },
       });
+      
+      console.log("Session configuration sent, waiting for confirmation...");
     } catch (error) {
       console.error("Error configuring session:", error);
     }

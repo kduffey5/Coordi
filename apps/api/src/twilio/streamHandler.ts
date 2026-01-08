@@ -84,37 +84,58 @@ export class TwilioStreamHandler {
   }
 
   private async handleStart(data: TwilioMediaStreamMessage) {
-    // Log full data structure for debugging
-    console.log("Twilio stream start event - full data:", JSON.stringify(data, null, 2));
+    // Log full data structure for debugging - this is critical!
+    console.log("=== Twilio START Event Debug ===");
+    console.log("Full data object:", JSON.stringify(data, null, 2));
+    console.log("Data keys:", Object.keys(data));
+    console.log("callSid directly:", data.callSid);
+    console.log("streamSid:", data.streamSid);
+    console.log("accountSid:", data.accountSid);
+    console.log("customParameters:", data.customParameters);
+    if (data.customParameters) {
+      console.log("Custom parameter keys:", Object.keys(data.customParameters));
+      console.log("Custom CallSid:", data.customParameters.CallSid);
+      console.log("Custom From:", data.customParameters.From);
+      console.log("Custom To:", data.customParameters.To);
+    }
     
-    // Get callSid from data.callSid or customParameters.CallSid
-    // Twilio provides it directly in some cases, or we get it from custom parameters we sent
-    const callSid = data.callSid || data.customParameters?.CallSid;
+    // Get callSid from multiple possible locations
+    // Twilio might provide it in different places depending on version/config
+    const callSid = data.callSid 
+      || data.customParameters?.CallSid 
+      || data.customParameters?.callSid
+      || (data as any).CallSid; // Sometimes it's capitalized
+    
     const streamSid = data.streamSid;
     
-    console.log("Twilio stream started:", { callSid, streamSid, customParams: data.customParameters });
+    console.log("Extracted values:", { callSid, streamSid });
     
     if (!callSid || !streamSid) {
-      console.error("Missing callSid or streamSid in start event", {
+      console.error("❌ CRITICAL: Missing callSid or streamSid", {
         callSid: !!callSid,
         streamSid: !!streamSid,
         hasCustomParams: !!data.customParameters,
         customParamKeys: data.customParameters ? Object.keys(data.customParameters) : [],
+        allDataKeys: Object.keys(data),
       });
+      console.error("Cannot proceed without callSid. Check TwiML parameters.");
       return;
     }
 
     // Find organization by Twilio number or use default
     // For MVP, we'll use a default org or look up by phone number
+    console.log("Looking for organization...");
     const org = await this.findOrganization(data);
     
     if (!org) {
-      console.error("Organization not found for call");
+      console.error("❌ CRITICAL: Organization not found for call");
+      console.error("Check that you have at least one organization in the database");
+      console.error("You may need to register a user first, which creates an organization");
       this.socket.close();
       return;
     }
     
-    console.log("Organization found:", org.id, org.name);
+    console.log("✅ Organization found:", { id: org.id, name: org.name, twilioNumber: org.twilioNumber });
 
 
     // Create call session (use the extracted callSid)
@@ -144,6 +165,15 @@ export class TwilioStreamHandler {
 
     // Initialize OpenAI bridge
     try {
+      console.log("Creating OpenAI bridge...");
+      
+      // Check if OpenAI API key is configured
+      if (!process.env.OPENAI_API_KEY) {
+        console.error("❌ CRITICAL: OPENAI_API_KEY environment variable is not set!");
+        throw new Error("OPENAI_API_KEY not configured");
+      }
+      console.log("✅ OPENAI_API_KEY is configured (length:", process.env.OPENAI_API_KEY.length, ")");
+      
       this.openAIBridge = new OpenAIBridge(this.callSession, org.id);
       
       // Pass Twilio socket reference to bridge so it can send audio back
@@ -161,7 +191,7 @@ export class TwilioStreamHandler {
       });
 
       await this.openAIBridge.initialize();
-      console.log("OpenAI bridge initialized successfully");
+      console.log("✅ OpenAI bridge initialized successfully");
 
       // Set up audio streaming
       this.setupAudioStreaming();
