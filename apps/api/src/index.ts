@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import formbody from "@fastify/formbody";
 import websocket from "@fastify/websocket";
 import dotenv from "dotenv";
 import { prisma } from "./config/database.js";
@@ -16,6 +17,9 @@ await fastify.register(cors, {
   origin: process.env.FRONTEND_URL || "http://localhost:3000",
   credentials: true,
 });
+
+// Register formbody parser for Twilio webhooks (application/x-www-form-urlencoded)
+await fastify.register(formbody);
 
 await fastify.register(websocket);
 

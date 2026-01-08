@@ -4,12 +4,13 @@ import { prisma } from "../config/database.js";
 const twilioRoutes: FastifyPluginAsync = async (fastify) => {
   // Twilio Voice webhook - returns TwiML to start media stream
   fastify.post("/voice", async (request, reply) => {
-    const body = request.body as any;
+    // Twilio sends form-urlencoded data, which is now parsed by @fastify/formbody
+    const body = request.body as Record<string, string> | undefined;
     
     // Extract call information
-    const fromNumber = body.From || "";
-    const toNumber = body.To || "";
-    const callSid = body.CallSid || "";
+    const fromNumber = body?.From || "";
+    const toNumber = body?.To || "";
+    const callSid = body?.CallSid || "";
 
     fastify.log.info(`Incoming call: ${fromNumber} -> ${toNumber} (${callSid})`);
     
@@ -53,9 +54,9 @@ const twilioRoutes: FastifyPluginAsync = async (fastify) => {
 
   // Twilio Status Callback webhook
   fastify.post("/status", async (request, reply) => {
-    const body = request.body as any;
-    const callSid = body.CallSid;
-    const callStatus = body.CallStatus;
+    const body = request.body as Record<string, string> | undefined;
+    const callSid = body?.CallSid;
+    const callStatus = body?.CallStatus;
 
     fastify.log.info(`Call status update: ${callSid} -> ${callStatus}`);
 
