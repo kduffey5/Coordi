@@ -9,7 +9,7 @@ dotenv.config();
 const API_URL = process.env.API_URL || "http://localhost:3001";
 
 async function testEndpoint(method: string, path: string, body?: any, token?: string) {
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
   
@@ -58,33 +58,37 @@ async function runTests() {
     organizationName: "Test Organization",
   });
   console.log(`   Status: ${register.status} ${register.ok ? "✅" : "❌"}`);
-  if (register.data?.token) {
-    console.log(`   Token received: ${register.data.token.substring(0, 20)}...`);
-    const token = register.data.token;
+  const registerData = register.data as { token?: string } | undefined;
+  if (registerData?.token) {
+    console.log(`   Token received: ${registerData.token.substring(0, 20)}...`);
+    const token = registerData.token;
 
     // Test 3: Get Agent Profile (authenticated)
     console.log("\n3. Testing Get Agent Profile (authenticated)...");
     const profile = await testEndpoint("GET", "/api/profile/agent", undefined, token);
     console.log(`   Status: ${profile.status} ${profile.ok ? "✅" : "❌"}`);
-    if (profile.data) {
-      console.log(`   Voice: ${profile.data.voice}, Tone: ${profile.data.tone}`);
+    const profileData = profile.data as { voice?: string; tone?: string } | undefined;
+    if (profileData) {
+      console.log(`   Voice: ${profileData.voice}, Tone: ${profileData.tone}`);
     }
 
     // Test 4: Get Metrics
     console.log("\n4. Testing Get Metrics...");
     const metrics = await testEndpoint("GET", "/api/metrics", undefined, token);
     console.log(`   Status: ${metrics.status} ${metrics.ok ? "✅" : "❌"}`);
-    if (metrics.data) {
-      console.log(`   Total Calls: ${metrics.data.calls?.total || 0}`);
-      console.log(`   Total Leads: ${metrics.data.leads?.total || 0}`);
+    const metricsData = metrics.data as { calls?: { total?: number }; leads?: { total?: number } } | undefined;
+    if (metricsData) {
+      console.log(`   Total Calls: ${metricsData.calls?.total || 0}`);
+      console.log(`   Total Leads: ${metricsData.leads?.total || 0}`);
     }
 
     // Test 5: Get Leads
     console.log("\n5. Testing Get Leads...");
     const leads = await testEndpoint("GET", "/api/leads", undefined, token);
     console.log(`   Status: ${leads.status} ${leads.ok ? "✅" : "❌"}`);
-    if (leads.data) {
-      console.log(`   Total Leads: ${leads.data.total || 0}`);
+    const leadsData = leads.data as { total?: number } | undefined;
+    if (leadsData) {
+      console.log(`   Total Leads: ${leadsData.total || 0}`);
     }
   }
 

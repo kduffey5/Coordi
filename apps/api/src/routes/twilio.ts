@@ -77,7 +77,7 @@ const twilioRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
       } catch (error) {
-        fastify.log.error("Error updating call status:", error);
+        fastify.log.error({ err: error }, "Error updating call status");
       }
     }
 

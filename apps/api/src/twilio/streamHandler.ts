@@ -1,8 +1,12 @@
-import { SocketStream } from "@fastify/websocket";
 import { prisma } from "../config/database.js";
 import { OpenAIBridge } from "./openaiBridge.js";
 import { handleToolCall } from "../tools/index.js";
 import type { CallSession, TwilioMediaStreamMessage } from "./types.js";
+import type WebSocket from "ws";
+
+interface SocketStream {
+  socket: WebSocket;
+}
 
 export class TwilioStreamHandler {
   private socket: SocketStream;
@@ -28,7 +32,7 @@ export class TwilioStreamHandler {
       await this.cleanup();
     });
 
-    this.socket.socket.on("error", (error) => {
+    this.socket.socket.on("error", (error: Error) => {
       console.error("WebSocket error:", error);
       this.cleanup();
     });

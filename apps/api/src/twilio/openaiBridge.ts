@@ -57,7 +57,8 @@ export class OpenAIBridge {
       
       // OpenAI Realtime API uses direct WebSocket connection
       // Connect to the Realtime API WebSocket endpoint
-      const WebSocket = (await import("ws")).default;
+      const WebSocketModule = await import("ws");
+      const WebSocket = WebSocketModule.default;
       const model = "gpt-4o-realtime-preview-2024-12-17";
       const wsUrl = `wss://api.openai.com/v1/realtime?model=${model}`;
       
