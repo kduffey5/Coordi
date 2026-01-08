@@ -399,23 +399,8 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
     console.log(`Sending initial greeting: ${greeting}`);
     
     try {
-      // Create a user message that will trigger the AI to respond with the greeting
-      // The system prompt already instructs it to start with this greeting
-      this.sendToOpenAI({
-        type: "conversation.item.create",
-        item: {
-          type: "message",
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: "Start the conversation now.",
-            },
-          ],
-        },
-      });
-
-      // Also trigger a response to get the AI speaking
+      // Trigger the AI to respond by creating a response
+      // The system prompt instructs it to start with the greeting
       this.sendToOpenAI({
         type: "response.create",
         response: {
@@ -423,6 +408,7 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
         },
       });
 
+      console.log("Initial greeting response triggered");
       this.callSession.transcript.push(`AI: ${greeting}`);
     } catch (error) {
       console.error("Error sending initial greeting:", error);
