@@ -23,6 +23,27 @@ await fastify.register(formbody);
 
 await fastify.register(websocket);
 
+// Root route - API information
+fastify.get("/", async (request, reply) => {
+  return {
+    name: "Coordi API",
+    version: "1.0.0",
+    status: "running",
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: "/health",
+      auth: "/api/auth",
+      profile: "/api/profile",
+      calls: "/api/calls",
+      leads: "/api/leads",
+      metrics: "/api/metrics",
+      integrations: "/api/integrations",
+      twilio: "/twilio",
+      websocket: "/call"
+    }
+  };
+});
+
 // Health check
 fastify.get("/health", async (request, reply) => {
   return { status: "ok", timestamp: new Date().toISOString() };
@@ -48,7 +69,7 @@ fastify.register(twilioRoutes, { prefix: "/twilio" });
 // WebSocket endpoint for Twilio Media Streams
 import { TwilioStreamHandler } from "./twilio/streamHandler.js";
 
-fastify.get("/call", { websocket: true }, (socket: any, req) => {
+fastify.get("/call", { websocket: true }, (connection, req) => {
   // In @fastify/websocket v10, the handler receives the WebSocket directly as the first parameter
   // We can also access the request to get URL query parameters if needed
   try {
@@ -57,12 +78,12 @@ fastify.get("/call", { websocket: true }, (socket: any, req) => {
     console.log("WebSocket query params:", req.query);
     
     // Pass request info to handler in case we need it
-    new TwilioStreamHandler(socket, req);
+    new TwilioStreamHandler(connection, req);
   } catch (error: any) {
     console.error("Error creating TwilioStreamHandler:", error);
     // Try to close the connection if possible
-    if (socket?.close) {
-      socket.close();
+    if (connection?.close) {
+      connection.close();
     }
   }
 });
