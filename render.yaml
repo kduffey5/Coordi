@@ -31,7 +31,7 @@ services:
     name: coordi-web
     runtime: node
     rootDir: apps/web
-    buildCommand: npm install && npm run build
+    buildCommand: cd ../.. && npm install && npm run build --workspace=@coordi/shared && cd apps/web && npm run build
     startCommand: npm run start
     envVars:
       - key: NODE_ENV
