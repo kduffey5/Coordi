@@ -38,6 +38,8 @@ const twilioRoutes: FastifyPluginAsync = async (fastify) => {
     fastify.log.info(`Using WebSocket URL: ${streamUrl}`);
     
     // Build TwiML with custom parameters
+    // Note: Twilio Media Streams automatically uses mulaw/8kHz/mono
+    // No need to specify format parameters in TwiML - they're handled by the Stream protocol
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>

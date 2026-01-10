@@ -397,6 +397,10 @@ export class OpenAIBridge {
     const sendFrame = () => {
       if (!this.twilioSocket || this.twilioSocket.readyState !== 1) {
         this._isSendingAudio = false;
+        if (this._frameTimer) {
+          clearTimeout(this._frameTimer);
+          this._frameTimer = null;
+        }
         return;
       }
       
@@ -404,6 +408,11 @@ export class OpenAIBridge {
       if (this._audioBuffer.length >= OpenAIBridge.FRAME_SIZE) {
         const frame = this._audioBuffer.slice(0, OpenAIBridge.FRAME_SIZE);
         this._audioBuffer = this._audioBuffer.slice(OpenAIBridge.FRAME_SIZE);
+        
+        // CRITICAL: Ensure frame is exactly 160 bytes
+        if (frame.length !== OpenAIBridge.FRAME_SIZE) {
+          console.error(`⚠️ Frame size mismatch: expected ${OpenAIBridge.FRAME_SIZE}, got ${frame.length}`);
+        }
         
         // Encode to base64
         const mulawBase64 = frame.toString("base64");
@@ -418,24 +427,45 @@ export class OpenAIBridge {
         
         try {
           this.twilioSocket.send(JSON.stringify(twilioMessage));
+          
+          // Debug: Log frame size for first few frames
+          if (!this._audioChunkCount) this._audioChunkCount = 0;
+          this._audioChunkCount++;
+          if (this._audioChunkCount <= 5) {
+            console.log(`📤 Frame #${this._audioChunkCount}: ${frame.length} bytes mulaw, ${mulawBase64.length} base64, buffer remaining: ${this._audioBuffer.length}`);
+          }
         } catch (error) {
           console.error("Error sending frame to Twilio:", error);
           this._isSendingAudio = false;
+          if (this._frameTimer) {
+            clearTimeout(this._frameTimer);
+            this._frameTimer = null;
+          }
           return;
         }
         
         // Schedule next frame (20ms interval for real-time pacing)
         this._frameTimer = setTimeout(sendFrame, OpenAIBridge.FRAME_INTERVAL_MS);
       } else {
-        // Buffer empty, stop streaming
+        // Buffer empty or incomplete, stop streaming temporarily
         this._isSendingAudio = false;
-        this._frameTimer = null;
+        if (this._frameTimer) {
+          clearTimeout(this._frameTimer);
+          this._frameTimer = null;
+        }
         
         // If more audio arrives, we'll restart
         if (this._audioBuffer.length > 0) {
           // Wait a bit and check again
           this._frameTimer = setTimeout(() => {
             if (this._audioBuffer.length >= OpenAIBridge.FRAME_SIZE) {
+              this.startAudioStreaming();
+            } else if (this._audioBuffer.length > 0) {
+              // If buffer has some data but not enough for a full frame,
+              // pad with silence to complete the frame and send it
+              // This prevents buffer buildup
+              const silence = Buffer.alloc(OpenAIBridge.FRAME_SIZE - this._audioBuffer.length, 0xFF); // MuLaw silence
+              this._audioBuffer = Buffer.concat([this._audioBuffer, silence]);
               this.startAudioStreaming();
             }
           }, OpenAIBridge.FRAME_INTERVAL_MS);
@@ -456,8 +486,52 @@ export class OpenAIBridge {
       this._frameTimer = null;
     }
     this._isSendingAudio = false;
+    
+    // Flush any remaining audio in buffer before clearing
+    // Send incomplete frames as silence-padded complete frames
+    if (this._audioBuffer.length > 0 && this.twilioSocket && this.twilioSocket.readyState === 1) {
+      console.log(`Flushing ${this._audioBuffer.length} bytes from audio buffer`);
+      while (this._audioBuffer.length > 0) {
+        if (this._audioBuffer.length >= OpenAIBridge.FRAME_SIZE) {
+          const frame = this._audioBuffer.slice(0, OpenAIBridge.FRAME_SIZE);
+          this._audioBuffer = this._audioBuffer.slice(OpenAIBridge.FRAME_SIZE);
+          this.sendFrameImmediate(frame);
+        } else {
+          // Pad incomplete frame with silence
+          const silence = Buffer.alloc(OpenAIBridge.FRAME_SIZE - this._audioBuffer.length, 0xFF);
+          const frame = Buffer.concat([this._audioBuffer, silence]);
+          this._audioBuffer = Buffer.alloc(0);
+          this.sendFrameImmediate(frame);
+        }
+      }
+    }
+    
     this._audioBuffer = Buffer.alloc(0);
     this._audioQueue = [];
+  }
+  
+  /**
+   * Send a single frame immediately (used for flushing)
+   */
+  private sendFrameImmediate(frame: Buffer) {
+    if (!this.twilioSocket || this.twilioSocket.readyState !== 1 || !this.callSession) {
+      return;
+    }
+    
+    const mulawBase64 = frame.toString("base64");
+    const twilioMessage = {
+      event: "media",
+      streamSid: this.callSession.streamSid,
+      media: {
+        payload: mulawBase64,
+      },
+    };
+    
+    try {
+      this.twilioSocket.send(JSON.stringify(twilioMessage));
+    } catch (error) {
+      console.error("Error flushing frame:", error);
+    }
   }
   
   private _audioChunkCount: number = 0;
