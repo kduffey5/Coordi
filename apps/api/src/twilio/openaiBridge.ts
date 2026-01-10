@@ -450,9 +450,9 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           },
           turn_detection: {
             type: "server_vad",
-            threshold: 0.5,
+            threshold: 0.6, // Increased from 0.5 - requires more confidence before detecting speech
             prefix_padding_ms: 300,
-            silence_duration_ms: 500,
+            silence_duration_ms: 1200, // Increased from 500ms - wait longer (1.2 seconds) before responding
           },
           tools: TOOL_SCHEMAS as any,
         },
@@ -650,21 +650,26 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
 
   /**
    * Remove DC offset from PCM16 audio to reduce static
-   * Calculates average sample value and subtracts it from all samples
+   * Only applied to output audio (AI → Twilio) to avoid affecting VAD on input
    */
   private removeDCOffset(pcm16Buffer: Buffer): Buffer {
     const sampleCount = pcm16Buffer.length / 2;
     if (sampleCount === 0) return pcm16Buffer;
     
-    // Calculate DC offset (average sample value)
+    // Calculate DC offset (average sample value) using a rolling window
+    // Use only recent samples to avoid affecting VAD on silence detection
+    const windowSize = Math.min(480, sampleCount); // ~20ms at 24kHz, ~60ms at 8kHz
+    const startIdx = Math.max(0, sampleCount - windowSize);
+    
     let sum = 0;
-    for (let i = 0; i < sampleCount; i++) {
+    for (let i = startIdx; i < sampleCount; i++) {
       sum += pcm16Buffer.readInt16LE(i * 2);
     }
-    const dcOffset = Math.round(sum / sampleCount);
+    const dcOffset = Math.round(sum / windowSize);
     
     // Only remove DC offset if it's significant (reduces unnecessary processing)
-    if (Math.abs(dcOffset) < 10) return pcm16Buffer; // Skip if offset is negligible
+    // Increased threshold to avoid affecting small signals
+    if (Math.abs(dcOffset) < 50) return pcm16Buffer; // Skip if offset is negligible
     
     // Remove DC offset
     const correctedBuffer = Buffer.from(pcm16Buffer);
@@ -747,10 +752,8 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       
       // OpenAI Realtime API expects PCM16 at 24kHz
       // Upsample from 8kHz to 24kHz (1:3 ratio)
-      let pcm16Audio24k = this.resample8kTo24k(pcm16Audio8k);
-      
-      // Remove DC offset and apply gentle noise reduction to reduce static
-      pcm16Audio24k = this.removeDCOffset(pcm16Audio24k);
+      // Note: Don't remove DC offset on input audio as it can interfere with VAD
+      const pcm16Audio24k = this.resample8kTo24k(pcm16Audio8k);
       
       // Debug: Check if audio is non-zero (not silence)
       const sampleCount8k = pcm16Audio8k.length / 2; // Each sample is 2 bytes
