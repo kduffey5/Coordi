@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 
-export default function LeadsPage() {
+function LeadsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
@@ -226,6 +226,18 @@ export default function LeadsPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function LeadsPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <p>Loading...</p>
+      </div>
+    }>
+      <LeadsPageContent />
+    </Suspense>
   );
 }
 
