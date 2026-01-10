@@ -179,6 +179,8 @@ export class OpenAIBridge {
     switch (message.type) {
       case "response.created":
         console.log("OpenAI response created");
+        // Clear any pending audio to prevent mixing with new response
+        this.stopAudioStreaming();
         break;
 
       case "response.done":
@@ -213,7 +215,10 @@ export class OpenAIBridge {
         break;
 
       case "input_audio_buffer.speech_started":
-        console.log("Caller started speaking");
+        console.log("Caller started speaking (barge-in detected)");
+        // Stop current audio output to prevent overlapping streams
+        // This prevents static and feedback loops
+        this.stopAudioStreaming();
         break;
 
       case "input_audio_buffer.speech_stopped":
@@ -334,6 +339,22 @@ export class OpenAIBridge {
       // Resample from 24kHz to 8kHz
       let pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
       
+      // Apply soft limiter to prevent clipping (reduce gain to 80% max)
+      // This prevents distortion and static from over-amplified audio
+      const maxAmplitude = 26214; // ~80% of 32767 to prevent clipping
+      let peak = 0;
+      for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
+        const sample = Math.abs(pcm16Buffer8k.readInt16LE(i));
+        peak = Math.max(peak, sample);
+      }
+      if (peak > maxAmplitude) {
+        const gain = maxAmplitude / peak;
+        for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
+          const sample = Math.round(pcm16Buffer8k.readInt16LE(i) * gain);
+          pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), i);
+        }
+      }
+      
       // Apply audio enhancement for crystal clear quality
       pcm16Buffer8k = this.enhanceAudioQuality(pcm16Buffer8k);
       
@@ -343,35 +364,114 @@ export class OpenAIBridge {
       // Convert PCM16 to MuLaw
       const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer8k);
       
-      // Encode MuLaw to base64 for Twilio
-      const mulawBase64 = mulawBuffer.toString("base64");
+      // Add to buffer queue for proper chunking
+      this._audioBuffer = Buffer.concat([this._audioBuffer, mulawBuffer]);
       
-      const twilioMessage = {
-        event: "media",
-        streamSid: this.callSession.streamSid,
-        media: {
-          payload: mulawBase64,
-        },
-      };
-
-      if (this.twilioSocket.readyState === 1) {
-        this.twilioSocket.send(JSON.stringify(twilioMessage));
-        // Log first few audio chunks to verify they're being sent
-        if (!this._audioChunkCount) this._audioChunkCount = 0;
-        this._audioChunkCount++;
-        if (this._audioChunkCount <= 3) {
-          console.log(`📤 Sent audio chunk #${this._audioChunkCount} to Twilio (PCM16 24kHz: ${pcm16Buffer24k.length} bytes, PCM16 8kHz: ${pcm16Buffer8k.length} bytes, MuLaw: ${mulawBuffer.length} bytes)`);
-        }
-      } else {
-        console.warn("Twilio socket not ready, state:", this.twilioSocket.readyState);
+      // Start sending if not already sending
+      if (!this._isSendingAudio) {
+        this.startAudioStreaming();
+      }
+      
+      // Log first few chunks
+      if (!this._audioChunkCount) this._audioChunkCount = 0;
+      this._audioChunkCount++;
+      if (this._audioChunkCount <= 3) {
+        console.log(`📤 Queued audio chunk #${this._audioChunkCount} (PCM16 24kHz: ${pcm16Buffer24k.length} bytes → MuLaw: ${mulawBuffer.length} bytes, buffer size: ${this._audioBuffer.length} bytes)`);
       }
     } catch (error) {
-      console.error("Error sending audio to Twilio:", error);
+      console.error("Error processing audio for Twilio:", error);
     }
+  }
+  
+  /**
+   * Start streaming audio to Twilio in 160-byte chunks (20ms frames)
+   * Ensures proper pacing and prevents buffer overflow
+   */
+  private startAudioStreaming() {
+    if (this._isSendingAudio || !this.twilioSocket || this.twilioSocket.readyState !== 1) {
+      return;
+    }
+    
+    this._isSendingAudio = true;
+    
+    const sendFrame = () => {
+      if (!this.twilioSocket || this.twilioSocket.readyState !== 1) {
+        this._isSendingAudio = false;
+        return;
+      }
+      
+      // Extract exactly 160 bytes (20ms frame) from buffer
+      if (this._audioBuffer.length >= OpenAIBridge.FRAME_SIZE) {
+        const frame = this._audioBuffer.slice(0, OpenAIBridge.FRAME_SIZE);
+        this._audioBuffer = this._audioBuffer.slice(OpenAIBridge.FRAME_SIZE);
+        
+        // Encode to base64
+        const mulawBase64 = frame.toString("base64");
+        
+        const twilioMessage = {
+          event: "media",
+          streamSid: this.callSession!.streamSid,
+          media: {
+            payload: mulawBase64,
+          },
+        };
+        
+        try {
+          this.twilioSocket.send(JSON.stringify(twilioMessage));
+        } catch (error) {
+          console.error("Error sending frame to Twilio:", error);
+          this._isSendingAudio = false;
+          return;
+        }
+        
+        // Schedule next frame (20ms interval for real-time pacing)
+        this._frameTimer = setTimeout(sendFrame, OpenAIBridge.FRAME_INTERVAL_MS);
+      } else {
+        // Buffer empty, stop streaming
+        this._isSendingAudio = false;
+        this._frameTimer = null;
+        
+        // If more audio arrives, we'll restart
+        if (this._audioBuffer.length > 0) {
+          // Wait a bit and check again
+          this._frameTimer = setTimeout(() => {
+            if (this._audioBuffer.length >= OpenAIBridge.FRAME_SIZE) {
+              this.startAudioStreaming();
+            }
+          }, OpenAIBridge.FRAME_INTERVAL_MS);
+        }
+      }
+    };
+    
+    // Start sending immediately
+    sendFrame();
+  }
+  
+  /**
+   * Stop audio streaming (called on session end or interruption)
+   */
+  private stopAudioStreaming() {
+    if (this._frameTimer) {
+      clearTimeout(this._frameTimer);
+      this._frameTimer = null;
+    }
+    this._isSendingAudio = false;
+    this._audioBuffer = Buffer.alloc(0);
+    this._audioQueue = [];
   }
   
   private _audioChunkCount: number = 0;
   private _inputAudioChunkCount: number = 0;
+  
+  // Audio buffer for chunking
+  private _audioBuffer: Buffer = Buffer.alloc(0);
+  private _isSendingAudio: boolean = false;
+  private _audioQueue: Buffer[] = [];
+  private _frameTimer: NodeJS.Timeout | null = null;
+  
+  // Twilio requires 160-byte chunks (20ms at 8kHz mulaw)
+  private static readonly FRAME_SIZE = 160; // bytes
+  private static readonly FRAME_INTERVAL_MS = 20; // 20ms per frame
 
   private buildSystemPrompt(profile: any): string {
     const org = profile.organization;
@@ -948,6 +1048,9 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   }
 
   async close() {
+    // Stop audio streaming first
+    this.stopAudioStreaming();
+    
     if (this.session?.ws) {
       try {
         // Send session end message
