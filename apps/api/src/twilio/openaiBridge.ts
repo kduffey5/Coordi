@@ -605,6 +605,45 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   }
 
   /**
+   * Resample PCM16 audio from 8kHz to 24kHz (1:3 upsampling)
+   * Uses simple linear interpolation for upsampling
+   */
+  private resample8kTo24k(pcm16Buffer: Buffer): Buffer {
+    // 8kHz to 24kHz is 1:3 ratio
+    const sourceRate = 8000;
+    const targetRate = 24000;
+    const ratio = targetRate / sourceRate; // 3.0
+    
+    // Each sample is 2 bytes (16-bit)
+    const sourceSamples = pcm16Buffer.length / 2;
+    const targetSamples = sourceSamples * ratio;
+    const targetBuffer = Buffer.allocUnsafe(targetSamples * 2);
+    
+    // Simple linear interpolation upsampling
+    for (let i = 0; i < targetSamples; i++) {
+      const sourceIndex = i / ratio;
+      const sourceIdx1 = Math.floor(sourceIndex);
+      const sourceIdx2 = Math.min(sourceIdx1 + 1, sourceSamples - 1);
+      const t = sourceIndex - sourceIdx1;
+      
+      // Read source samples
+      const sample1 = pcm16Buffer.readInt16LE(sourceIdx1 * 2);
+      const sample2 = pcm16Buffer.readInt16LE(sourceIdx2 * 2);
+      
+      // Linear interpolation
+      const interpolated = Math.round(sample1 * (1 - t) + sample2 * t);
+      
+      // Clamp to 16-bit range
+      const clamped = Math.max(-32768, Math.min(32767, interpolated));
+      
+      // Write to target buffer
+      targetBuffer.writeInt16LE(clamped, i * 2);
+    }
+    
+    return targetBuffer;
+  }
+
+  /**
    * Convert PCM16 audio to MuLaw (G.711 μ-law)
    * PCM16 is 16-bit signed integers, MuLaw is 8-bit encoded
    * Standard ITU-T G.711 μ-law encoding algorithm
@@ -668,15 +707,20 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
 
     try {
       // Convert MuLaw (from Twilio) to PCM16 (required by OpenAI)
-      // Twilio sends audio/x-mulaw at 8kHz, OpenAI expects pcm16 at 8kHz
-      const pcm16Audio = this.mulawToPcm16(audioData);
+      // Twilio sends audio/x-mulaw at 8kHz
+      const pcm16Audio8k = this.mulawToPcm16(audioData);
+      
+      // OpenAI Realtime API expects PCM16 at 24kHz
+      // Upsample from 8kHz to 24kHz (1:3 ratio)
+      const pcm16Audio24k = this.resample8kTo24k(pcm16Audio8k);
       
       // Debug: Check if audio is non-zero (not silence)
-      const sampleCount = pcm16Audio.length / 2; // Each sample is 2 bytes
+      const sampleCount8k = pcm16Audio8k.length / 2; // Each sample is 2 bytes
+      const sampleCount24k = pcm16Audio24k.length / 2;
       let nonZeroSamples = 0;
       let maxAmplitude = 0;
-      for (let i = 0; i < sampleCount; i++) {
-        const sample = pcm16Audio.readInt16LE(i * 2);
+      for (let i = 0; i < sampleCount24k; i++) {
+        const sample = pcm16Audio24k.readInt16LE(i * 2);
         if (sample !== 0) nonZeroSamples++;
         maxAmplitude = Math.max(maxAmplitude, Math.abs(sample));
       }
@@ -685,17 +729,18 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       if (!this._inputAudioChunkCount) this._inputAudioChunkCount = 0;
       this._inputAudioChunkCount++;
       if (this._inputAudioChunkCount <= 5) {
-        console.log(`📥 Input audio chunk #${this._inputAudioChunkCount}: MuLaw ${audioData.length} bytes → PCM16 ${pcm16Audio.length} bytes, ${nonZeroSamples}/${sampleCount} non-zero samples, max amplitude: ${maxAmplitude}`);
+        console.log(`📥 Input audio chunk #${this._inputAudioChunkCount}: MuLaw ${audioData.length} bytes → PCM16 8kHz ${pcm16Audio8k.length} bytes → PCM16 24kHz ${pcm16Audio24k.length} bytes`);
+        console.log(`   Non-zero samples: ${nonZeroSamples}/${sampleCount24k}, max amplitude: ${maxAmplitude}`);
         // Log first few MuLaw bytes to see if they're all the same
         const firstBytes = Array.from(audioData.slice(0, Math.min(10, audioData.length))).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' ');
         console.log(`   First MuLaw bytes: ${firstBytes}`);
       }
       
-      // Convert PCM16 buffer to base64
-      const base64Audio = pcm16Audio.toString("base64");
+      // Convert PCM16 buffer (24kHz) to base64
+      const base64Audio = pcm16Audio24k.toString("base64");
       
       // Send audio to OpenAI Realtime API
-      // Now the audio is in PCM16 format at 8kHz as expected by OpenAI
+      // Now the audio is in PCM16 format at 24kHz as expected by OpenAI
       this.sendToOpenAI({
         type: "input_audio_buffer.append",
         audio: base64Audio,
