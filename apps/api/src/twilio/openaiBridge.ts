@@ -324,11 +324,24 @@ export class OpenAIBridge {
     }
 
     try {
+      // OpenAI sends PCM16 audio (base64 encoded)
+      // Twilio expects MuLaw audio (base64 encoded)
+      // We need to convert PCM16 → MuLaw
+      
+      // Decode base64 PCM16 audio
+      const pcm16Buffer = Buffer.from(audioBase64, "base64");
+      
+      // Convert PCM16 to MuLaw
+      const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer);
+      
+      // Encode MuLaw to base64 for Twilio
+      const mulawBase64 = mulawBuffer.toString("base64");
+      
       const twilioMessage = {
         event: "media",
         streamSid: this.callSession.streamSid,
         media: {
-          payload: audioBase64,
+          payload: mulawBase64,
         },
       };
 
@@ -338,7 +351,7 @@ export class OpenAIBridge {
         if (!this._audioChunkCount) this._audioChunkCount = 0;
         this._audioChunkCount++;
         if (this._audioChunkCount <= 3) {
-          console.log(`📤 Sent audio chunk #${this._audioChunkCount} to Twilio (${audioBase64.length} bytes)`);
+          console.log(`📤 Sent audio chunk #${this._audioChunkCount} to Twilio (PCM16: ${pcm16Buffer.length} bytes, MuLaw: ${mulawBuffer.length} bytes)`);
         }
       } else {
         console.warn("Twilio socket not ready, state:", this.twilioSocket.readyState);
@@ -539,6 +552,61 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
     }
     
     return pcm16Buffer;
+  }
+
+  /**
+   * Convert PCM16 audio to MuLaw (G.711 μ-law)
+   * PCM16 is 16-bit signed integers, MuLaw is 8-bit encoded
+   */
+  private pcm16ToMulaw(pcm16Buffer: Buffer): Buffer {
+    const mulawBuffer = Buffer.allocUnsafe(pcm16Buffer.length / 2);
+    
+    // PCM16 to MuLaw conversion (standard G.711 μ-law algorithm)
+    const MULAW_BIAS = 33; // μ-law bias (not the same as decoding bias)
+    const SIGN_BIT = 0x80;
+    const QUANT_MASK = 0x0F;
+    const SEG_SHIFT = 0x04;
+    const SEG_MASK = 0x70;
+    
+    for (let i = 0; i < mulawBuffer.length; i++) {
+      // Read 16-bit signed integer (little-endian)
+      let sample = pcm16Buffer.readInt16LE(i * 2);
+      
+      // Get sign bit (MSB)
+      const sign = (sample >>> 15) & 0x01;
+      
+      // Get magnitude (absolute value)
+      let magnitude = Math.abs(sample);
+      
+      // Clamp to valid range for μ-law (0 to 32635)
+      magnitude = Math.min(magnitude, 32635);
+      
+      // Add bias (33 for μ-law)
+      magnitude += MULAW_BIAS;
+      
+      // Find exponent (segment) - log2-like operation
+      let exponent = 7;
+      for (let exp = 0; exp < 8; exp++) {
+        if (magnitude <= ((0x1F << (exp + 2)) + (1 << (exp + 2)))) {
+          exponent = exp;
+          break;
+        }
+      }
+      
+      // Calculate mantissa (4-bit quantization)
+      // Shift right by (exponent + 3) and mask to 4 bits
+      const mantissa = (magnitude >> (exponent + 3)) & QUANT_MASK;
+      
+      // Combine: sign (bit 7) | exponent (bits 6-4) | mantissa (bits 3-0)
+      let mulaw = (sign << 7) | (exponent << SEG_SHIFT) | mantissa;
+      
+      // Invert all bits (μ-law encoding requires bit inversion)
+      mulaw ^= 0xFF;
+      
+      mulawBuffer[i] = mulaw;
+    }
+    
+    return mulawBuffer;
   }
 
   async sendAudio(audioData: Buffer) {
