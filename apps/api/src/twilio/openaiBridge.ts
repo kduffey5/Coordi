@@ -467,18 +467,38 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       }
       
       try {
-        // Trigger the AI to respond by creating a response with the greeting text
-        // This tells the AI what to say initially
+        // To trigger the AI to speak the initial greeting:
+        // 1. Add a conversation item with input text (simple trigger)
+        // 2. Create a response - AI will respond based on system prompt which instructs greeting
+        
+        // Add conversation item first (simulates user saying something)
+        this.sendToOpenAI({
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "Hello",
+              },
+            ],
+          },
+        });
+        
+        // Small delay to ensure conversation item is processed
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        // Now create a response - AI should respond with greeting from system prompt
         this.sendToOpenAI({
           type: "response.create",
           response: {
             modalities: ["audio"],
-            input_text: greeting, // Tell the AI what to say
           },
         });
 
         this._greetingSent = true;
-        console.log("✅ Initial greeting response triggered");
+        console.log("✅ Initial greeting response triggered (AI will use system prompt to generate greeting)");
         this.callSession.transcript.push(`AI: ${greeting}`);
       } catch (error) {
         console.error("Error sending initial greeting:", error);
