@@ -557,48 +557,50 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   /**
    * Convert PCM16 audio to MuLaw (G.711 μ-law)
    * PCM16 is 16-bit signed integers, MuLaw is 8-bit encoded
+   * Standard ITU-T G.711 μ-law encoding algorithm
    */
   private pcm16ToMulaw(pcm16Buffer: Buffer): Buffer {
     const mulawBuffer = Buffer.allocUnsafe(pcm16Buffer.length / 2);
     
-    // PCM16 to MuLaw conversion (standard G.711 μ-law algorithm)
-    const MULAW_BIAS = 33; // μ-law bias (not the same as decoding bias)
-    const SIGN_BIT = 0x80;
-    const QUANT_MASK = 0x0F;
-    const SEG_SHIFT = 0x04;
-    const SEG_MASK = 0x70;
+    // Standard G.711 μ-law encoding constants
+    const BIAS = 0x84; // 132 decimal
+    const MAX = 32635; // Maximum value for μ-law encoding
     
     for (let i = 0; i < mulawBuffer.length; i++) {
-      // Read 16-bit signed integer (little-endian)
+      // Read 16-bit signed integer (little-endian, as OpenAI sends)
       let sample = pcm16Buffer.readInt16LE(i * 2);
       
-      // Get sign bit (MSB)
+      // Get sign bit (bit 15)
       const sign = (sample >>> 15) & 0x01;
       
       // Get magnitude (absolute value)
       let magnitude = Math.abs(sample);
       
-      // Clamp to valid range for μ-law (0 to 32635)
-      magnitude = Math.min(magnitude, 32635);
+      // Clamp to valid range
+      magnitude = Math.min(magnitude, MAX);
       
-      // Add bias (33 for μ-law)
-      magnitude += MULAW_BIAS;
+      // Add bias
+      magnitude += BIAS;
       
-      // Find exponent (segment) - log2-like operation
+      // Find exponent (segment) using logarithm-like operation
+      // The segments are: 0-31, 32-95, 96-223, 224-479, 480-991, 992-2015, 2016-4063, 4064-8159
+      // But we use a simpler approach: find the highest set bit position
       let exponent = 7;
-      for (let exp = 0; exp < 8; exp++) {
-        if (magnitude <= ((0x1F << (exp + 2)) + (1 << (exp + 2)))) {
-          exponent = exp;
-          break;
-        }
-      }
+      if (magnitude < 0x1F) exponent = 0;
+      else if (magnitude < 0x3F) exponent = 1;
+      else if (magnitude < 0x7F) exponent = 2;
+      else if (magnitude < 0xFF) exponent = 3;
+      else if (magnitude < 0x1FF) exponent = 4;
+      else if (magnitude < 0x3FF) exponent = 5;
+      else if (magnitude < 0x7FF) exponent = 6;
+      // else exponent = 7 (already set)
       
       // Calculate mantissa (4-bit quantization)
       // Shift right by (exponent + 3) and mask to 4 bits
-      const mantissa = (magnitude >> (exponent + 3)) & QUANT_MASK;
+      const mantissa = (magnitude >> (exponent + 3)) & 0x0F;
       
       // Combine: sign (bit 7) | exponent (bits 6-4) | mantissa (bits 3-0)
-      let mulaw = (sign << 7) | (exponent << SEG_SHIFT) | mantissa;
+      let mulaw = (sign << 7) | (exponent << 4) | mantissa;
       
       // Invert all bits (μ-law encoding requires bit inversion)
       mulaw ^= 0xFF;
