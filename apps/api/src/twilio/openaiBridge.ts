@@ -490,10 +490,11 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
         await new Promise(resolve => setTimeout(resolve, 200));
         
         // Now create a response - AI should respond with greeting from system prompt
+        // Must use ['audio', 'text'] - OpenAI doesn't support ['audio'] alone
         this.sendToOpenAI({
           type: "response.create",
           response: {
-            modalities: ["audio"],
+            modalities: ["audio", "text"],
           },
         });
 
