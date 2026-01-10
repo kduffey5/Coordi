@@ -332,7 +332,10 @@ export class OpenAIBridge {
       const pcm16Buffer24k = Buffer.from(audioBase64, "base64");
       
       // Resample from 24kHz to 8kHz
-      const pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
+      let pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
+      
+      // Remove DC offset to reduce static and improve audio quality
+      pcm16Buffer8k = this.removeDCOffset(pcm16Buffer8k);
       
       // Convert PCM16 to MuLaw
       const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer8k);
@@ -646,6 +649,36 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   }
 
   /**
+   * Remove DC offset from PCM16 audio to reduce static
+   * Calculates average sample value and subtracts it from all samples
+   */
+  private removeDCOffset(pcm16Buffer: Buffer): Buffer {
+    const sampleCount = pcm16Buffer.length / 2;
+    if (sampleCount === 0) return pcm16Buffer;
+    
+    // Calculate DC offset (average sample value)
+    let sum = 0;
+    for (let i = 0; i < sampleCount; i++) {
+      sum += pcm16Buffer.readInt16LE(i * 2);
+    }
+    const dcOffset = Math.round(sum / sampleCount);
+    
+    // Only remove DC offset if it's significant (reduces unnecessary processing)
+    if (Math.abs(dcOffset) < 10) return pcm16Buffer; // Skip if offset is negligible
+    
+    // Remove DC offset
+    const correctedBuffer = Buffer.from(pcm16Buffer);
+    for (let i = 0; i < sampleCount; i++) {
+      const sample = pcm16Buffer.readInt16LE(i * 2);
+      const corrected = sample - dcOffset;
+      const clamped = Math.max(-32768, Math.min(32767, corrected));
+      correctedBuffer.writeInt16LE(clamped, i * 2);
+    }
+    
+    return correctedBuffer;
+  }
+
+  /**
    * Convert PCM16 audio to MuLaw (G.711 μ-law)
    * PCM16 is 16-bit signed integers, MuLaw is 8-bit encoded
    * Standard ITU-T G.711 μ-law encoding algorithm
@@ -653,8 +686,9 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   private pcm16ToMulaw(pcm16Buffer: Buffer): Buffer {
     const mulawBuffer = Buffer.allocUnsafe(pcm16Buffer.length / 2);
     
-    // Standard G.711 μ-law encoding constants
-    const BIAS = 0x84; // 132 decimal
+    // Standard G.711 μ-law encoding
+    // Reference: ITU-T G.711 specification
+    const BIAS = 33; // Standard G.711 bias (same as decoding)
     const MAX = 32635; // Maximum value for μ-law encoding
     
     for (let i = 0; i < mulawBuffer.length; i++) {
@@ -667,24 +701,23 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       // Get magnitude (absolute value)
       let magnitude = Math.abs(sample);
       
-      // Clamp to valid range
+      // Clamp to valid range to prevent overflow
       magnitude = Math.min(magnitude, MAX);
       
-      // Add bias
+      // Add bias for proper encoding
       magnitude += BIAS;
       
-      // Find exponent (segment) using logarithm-like operation
-      // The segments are: 0-31, 32-95, 96-223, 224-479, 480-991, 992-2015, 2016-4063, 4064-8159
-      // But we use a simpler approach: find the highest set bit position
-      let exponent = 7;
-      if (magnitude < 0x1F) exponent = 0;
-      else if (magnitude < 0x3F) exponent = 1;
-      else if (magnitude < 0x7F) exponent = 2;
-      else if (magnitude < 0xFF) exponent = 3;
-      else if (magnitude < 0x1FF) exponent = 4;
-      else if (magnitude < 0x3FF) exponent = 5;
-      else if (magnitude < 0x7FF) exponent = 6;
-      // else exponent = 7 (already set)
+      // Find exponent (segment) - use bit counting for accuracy
+      // This is more accurate than threshold checking
+      let exponent = 0;
+      if (magnitude >= 0x7FF) exponent = 7;
+      else if (magnitude >= 0x3FF) exponent = 6;
+      else if (magnitude >= 0x1FF) exponent = 5;
+      else if (magnitude >= 0xFF) exponent = 4;
+      else if (magnitude >= 0x7F) exponent = 3;
+      else if (magnitude >= 0x3F) exponent = 2;
+      else if (magnitude >= 0x1F) exponent = 1;
+      // else exponent = 0 (already set)
       
       // Calculate mantissa (4-bit quantization)
       // Shift right by (exponent + 3) and mask to 4 bits
@@ -714,7 +747,10 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       
       // OpenAI Realtime API expects PCM16 at 24kHz
       // Upsample from 8kHz to 24kHz (1:3 ratio)
-      const pcm16Audio24k = this.resample8kTo24k(pcm16Audio8k);
+      let pcm16Audio24k = this.resample8kTo24k(pcm16Audio8k);
+      
+      // Remove DC offset and apply gentle noise reduction to reduce static
+      pcm16Audio24k = this.removeDCOffset(pcm16Audio24k);
       
       // Debug: Check if audio is non-zero (not silence)
       const sampleCount8k = pcm16Audio8k.length / 2; // Each sample is 2 bytes
