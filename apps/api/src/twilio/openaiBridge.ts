@@ -506,17 +506,56 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       }
   }
 
+  /**
+   * Convert MuLaw (G.711 μ-law) audio to PCM16
+   * MuLaw is 8-bit encoded, PCM16 is 16-bit signed integers
+   */
+  private mulawToPcm16(mulawBuffer: Buffer): Buffer {
+    const pcm16Buffer = Buffer.allocUnsafe(mulawBuffer.length * 2);
+    
+    // MuLaw to PCM16 conversion table (standard G.711 algorithm)
+    const MULAW_BIAS = 0x84;
+    const MULAW_SEG_SHIFT = 0x04;
+    const MULAW_SEG_MASK = 0x70;
+    
+    for (let i = 0; i < mulawBuffer.length; i++) {
+      let mulaw = mulawBuffer[i] ^ 0xFF; // Invert all bits
+      
+      // Extract sign bit
+      const sign = (mulaw & 0x80) ? -1 : 1;
+      const exponent = (mulaw & MULAW_SEG_MASK) >> MULAW_SEG_SHIFT;
+      const mantissa = (mulaw & 0x0F) | 0x10;
+      
+      // Calculate sample
+      let sample = mantissa << (exponent + 2);
+      sample -= MULAW_BIAS;
+      sample *= sign;
+      
+      // Clamp to 16-bit signed integer range
+      sample = Math.max(-32768, Math.min(32767, sample));
+      
+      // Write as little-endian 16-bit signed integer
+      pcm16Buffer.writeInt16LE(sample, i * 2);
+    }
+    
+    return pcm16Buffer;
+  }
+
   async sendAudio(audioData: Buffer) {
     if (!this.session?.ws || this.session.ws.readyState !== 1 || !this.isInitialized) {
       return;
     }
 
     try {
-      // Convert audio buffer to base64
-      const base64Audio = audioData.toString("base64");
+      // Convert MuLaw (from Twilio) to PCM16 (required by OpenAI)
+      // Twilio sends audio/x-mulaw at 8kHz, OpenAI expects pcm16 at 8kHz
+      const pcm16Audio = this.mulawToPcm16(audioData);
+      
+      // Convert PCM16 buffer to base64
+      const base64Audio = pcm16Audio.toString("base64");
       
       // Send audio to OpenAI Realtime API
-      // The audio format should be PCM16 at 8kHz (matching Twilio's format)
+      // Now the audio is in PCM16 format at 8kHz as expected by OpenAI
       this.sendToOpenAI({
         type: "input_audio_buffer.append",
         audio: base64Audio,
