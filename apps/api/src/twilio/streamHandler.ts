@@ -9,6 +9,7 @@ export class TwilioStreamHandler {
   private callSession: CallSession | null = null;
   private openAIBridge: OpenAIBridge | null = null;
   private reqUrl: string | undefined;
+  private _mediaChunkCount: number = 0;
 
   constructor(connection: WebSocket | any, req?: any) {
     // Handle both WebSocket directly or wrapper object (SocketStream) with .socket property
@@ -256,22 +257,39 @@ export class TwilioStreamHandler {
   }
 
   private async handleMedia(data: TwilioMediaStreamMessage) {
-    if (!data.media || !data.media.payload) return;
-    
-    // Only process inbound audio (from caller)
-    if (data.media.track !== "inbound") {
-      console.log("Ignoring outbound audio track");
+    if (!data.media || !data.media.payload) {
+      console.log("Media event missing payload");
       return;
     }
-
-    // Decode base64 audio from Twilio (PCM16, 8kHz)
+    
+    // Log track information for debugging
+    const track = data.media.track;
+    if (!track || track === undefined) {
+      // If track is missing, log it but process anyway (defensive approach)
+      // Sometimes Twilio doesn't include track info in media events
+      console.log("⚠️ Media event missing 'track' property - processing as inbound (defensive)");
+    } else if (track !== "inbound") {
+      // Only skip if explicitly marked as outbound
+      console.log(`Ignoring outbound audio track: ${track}`);
+      return;
+    }
+    
+    // Decode base64 audio from Twilio (MuLaw, 8kHz - will be converted to PCM16 in sendAudio)
     const audioChunk = Buffer.from(data.media.payload, "base64");
+    
+    // Debug: Log audio chunk info for first few chunks
+    if (!this._mediaChunkCount) this._mediaChunkCount = 0;
+    this._mediaChunkCount++;
+    if (this._mediaChunkCount <= 3) {
+      console.log(`📥 Media chunk #${this._mediaChunkCount}: track=${track || 'undefined'}, payload length=${data.media.payload.length}, decoded bytes=${audioChunk.length}`);
+    }
 
     // Send audio directly to OpenAI (no buffering needed, OpenAI handles buffering)
+    // sendAudio will check if bridge is initialized, so we just try
     if (this.openAIBridge) {
       await this.openAIBridge.sendAudio(audioChunk);
     } else {
-      console.warn("OpenAI bridge not initialized, cannot send audio");
+      console.warn("⚠️ OpenAI bridge not initialized, cannot send audio");
     }
   }
 

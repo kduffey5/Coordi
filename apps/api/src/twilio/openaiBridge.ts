@@ -21,7 +21,7 @@ export class OpenAIBridge {
   private businessName: string = "";
   private customWelcomePrompt: string = "";
   private twilioSocket: any = null; // Reference to Twilio WebSocket for sending audio back
-  private isInitialized: boolean = false;
+  public isInitialized: boolean = false;
   private _greetingSent: boolean = false; // Track if greeting was sent
 
   constructor(callSession: CallSession, organizationId: string) {
