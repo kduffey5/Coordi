@@ -114,6 +114,10 @@ export class OpenAIBridge {
         try {
           const message = JSON.parse(data.toString());
           console.log("OpenAI message received:", message.type);
+          // Log important events with more detail
+          if (message.type === "session.updated" || message.type === "response.created" || message.type === "response.audio.delta") {
+            console.log("OpenAI event details:", JSON.stringify(message, null, 2).substring(0, 500));
+          }
           this.handleOpenAIMessage(message);
         } catch (error) {
           console.error("Error parsing OpenAI message:", error);
@@ -188,12 +192,14 @@ export class OpenAIBridge {
       case "response.audio.delta":
         // Audio output from AI - send to Twilio
         if (message.delta && this.twilioSocket && this.callSession) {
-          console.log("Received audio delta from OpenAI, sending to Twilio");
+          console.log("✅ Received audio delta from OpenAI (length:", message.delta?.length, "), sending to Twilio");
           this.sendAudioToTwilio(message.delta);
         } else {
-          console.warn("Audio delta received but missing required components:", {
+          console.warn("❌ Audio delta received but missing required components:", {
             hasDelta: !!message.delta,
+            deltaLength: message.delta?.length,
             hasTwilioSocket: !!this.twilioSocket,
+            twilioSocketReady: this.twilioSocket?.readyState,
             hasCallSession: !!this.callSession,
           });
         }
@@ -301,7 +307,10 @@ export class OpenAIBridge {
   }
 
   private sendAudioToTwilio(audioBase64: string) {
-    if (!this.twilioSocket || !this.callSession) return;
+    if (!this.twilioSocket || !this.callSession) {
+      console.warn("Cannot send audio to Twilio - missing socket or session");
+      return;
+    }
 
     try {
       const twilioMessage = {
@@ -314,11 +323,21 @@ export class OpenAIBridge {
 
       if (this.twilioSocket.readyState === 1) {
         this.twilioSocket.send(JSON.stringify(twilioMessage));
+        // Log first few audio chunks to verify they're being sent
+        if (!this._audioChunkCount) this._audioChunkCount = 0;
+        this._audioChunkCount++;
+        if (this._audioChunkCount <= 3) {
+          console.log(`📤 Sent audio chunk #${this._audioChunkCount} to Twilio (${audioBase64.length} bytes)`);
+        }
+      } else {
+        console.warn("Twilio socket not ready, state:", this.twilioSocket.readyState);
       }
     } catch (error) {
       console.error("Error sending audio to Twilio:", error);
     }
   }
+  
+  private _audioChunkCount: number = 0;
 
   private buildSystemPrompt(profile: any): string {
     const org = profile.organization;
