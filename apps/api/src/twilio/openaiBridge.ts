@@ -434,10 +434,10 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           voice: agentProfile.voice || "alloy",
           temperature: 0.8,
           // Twilio sends audio/x-mulaw (G.711 μ-law) at 8kHz
-          // OpenAI Realtime API requires pcm16 format
-          // Note: We're sending MuLaw data but telling OpenAI it's PCM16 - may need conversion
+          // OpenAI Realtime API requires pcm16 format at 8kHz to match Twilio
           input_audio_format: "pcm16",
           output_audio_format: "pcm16",
+          sample_rate: 8000, // Match Twilio's 8kHz sample rate
           input_audio_transcription: {
             model: "whisper-1",
           },
