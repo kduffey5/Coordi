@@ -354,7 +354,7 @@ export class OpenAIBridge {
         if (!this._audioChunkCount) this._audioChunkCount = 0;
         this._audioChunkCount++;
         if (this._audioChunkCount <= 3) {
-          console.log(`📤 Sent audio chunk #${this._audioChunkCount} to Twilio (PCM16: ${pcm16Buffer.length} bytes, MuLaw: ${mulawBuffer.length} bytes)`);
+          console.log(`📤 Sent audio chunk #${this._audioChunkCount} to Twilio (PCM16 24kHz: ${pcm16Buffer24k.length} bytes, PCM16 8kHz: ${pcm16Buffer8k.length} bytes, MuLaw: ${mulawBuffer.length} bytes)`);
         }
       } else {
         console.warn("Twilio socket not ready, state:", this.twilioSocket.readyState);
