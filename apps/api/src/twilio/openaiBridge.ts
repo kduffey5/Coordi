@@ -675,8 +675,9 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   }
 
   /**
-   * Enhance audio quality with high-pass filtering and normalization
+   * Enhance audio quality with band-pass filtering and normalization
    * Applied to output audio (AI → Twilio) for crystal clear sound
+   * Uses band-pass filtering to remove both low and high frequency noise
    */
   private enhanceAudioQuality(pcm16Buffer: Buffer): Buffer {
     const sampleCount = pcm16Buffer.length / 2;
@@ -684,36 +685,50 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
     
     const enhancedBuffer = Buffer.from(pcm16Buffer);
     
-    // High-pass filter to remove low-frequency noise/hum (below ~80Hz at 8kHz)
-    // First-order IIR high-pass filter with cutoff at ~80Hz
-    // For 8kHz sample rate: fc = 80Hz, RC = 1/(2*π*fc) = ~0.002s
-    // alpha = RC / (RC + 1/sampleRate) = RC / (RC + 0.000125) ≈ 0.94
-    const alpha = 0.94; // Filter coefficient for ~80Hz cutoff at 8kHz
-    let prevInput = 0;
-    let prevOutput = 0;
+    // High-pass filter to remove low-frequency noise/hum (below ~100Hz at 8kHz)
+    // First-order IIR high-pass filter with cutoff at ~100Hz
+    // For 8kHz sample rate: fc = 100Hz, RC = 1/(2*π*fc) = ~0.0016s
+    // alpha = RC / (RC + 1/sampleRate) = 0.0016 / (0.0016 + 0.000125) ≈ 0.928
+    const alphaHP = 0.928; // High-pass filter coefficient for ~100Hz cutoff
+    let prevInputHP = 0;
+    let prevOutputHP = 0;
+    
+    // Low-pass filter to remove high-frequency noise (above ~3400Hz at 8kHz)
+    // Nyquist is 4kHz, so filter above 85% of Nyquist
+    // For 8kHz sample rate: fc = 3400Hz, RC = 1/(2*π*fc) = ~0.000047s
+    // alpha = RC / (RC + 1/sampleRate) = 0.000047 / (0.000047 + 0.000125) ≈ 0.273
+    const alphaLP = 0.273; // Low-pass filter coefficient for ~3400Hz cutoff
+    let prevOutputLP = 0;
     
     // Normalize audio to maximize clarity (prevent clipping)
     let maxAmplitude = 0;
     const samples: number[] = [];
     
-    // First pass: Apply high-pass filter and find max amplitude
+    // First pass: Apply high-pass then low-pass filtering (band-pass effect)
     for (let i = 0; i < sampleCount; i++) {
       const sample = pcm16Buffer.readInt16LE(i * 2);
       
-      // First-order high-pass filter: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
-      const filtered = alpha * (prevOutput + sample - prevInput);
-      prevInput = sample;
-      prevOutput = filtered;
+      // High-pass filter: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+      const filteredHP = alphaHP * (prevOutputHP + sample - prevInputHP);
+      prevInputHP = sample;
+      prevOutputHP = filteredHP;
       
-      const filteredInt = Math.round(filtered);
+      // Low-pass filter: y[n] = alpha * x[n] + (1 - alpha) * y[n-1]
+      const filteredLP = alphaLP * filteredHP + (1 - alphaLP) * prevOutputLP;
+      prevOutputLP = filteredLP;
+      
+      const filteredInt = Math.round(filteredLP);
       samples.push(filteredInt);
       maxAmplitude = Math.max(maxAmplitude, Math.abs(filteredInt));
     }
     
-    // Second pass: Normalize to ~92% of max range for optimal clarity
-    // Only normalize if audio is not already at good levels
-    const targetMax = 30145; // ~92% of 32767 for headroom
-    const normalizationFactor = maxAmplitude > targetMax ? targetMax / maxAmplitude : 1.0;
+    // Second pass: Normalize to ~90% of max range for optimal clarity
+    // Only normalize if audio is significantly below optimal level
+    const targetMax = 29491; // ~90% of 32767 for headroom
+    const minThreshold = 5000; // Only normalize if max is below this
+    const normalizationFactor = (maxAmplitude < minThreshold && maxAmplitude > 100) 
+      ? targetMax / maxAmplitude 
+      : 1.0;
     
     for (let i = 0; i < sampleCount; i++) {
       const normalized = Math.round(samples[i] * normalizationFactor);
@@ -722,6 +737,50 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
     }
     
     return enhancedBuffer;
+  }
+
+  /**
+   * Reduce noise in input audio (light processing to avoid affecting VAD)
+   * Applies high-pass filter and noise gate to remove static and background noise
+   */
+  private reduceInputNoise(pcm16Buffer: Buffer): Buffer {
+    const sampleCount = pcm16Buffer.length / 2;
+    if (sampleCount === 0) return pcm16Buffer;
+    
+    const cleanedBuffer = Buffer.allocUnsafe(pcm16Buffer.length);
+    
+    // Light high-pass filter to remove low-frequency noise (below ~150Hz at 8kHz)
+    // More aggressive than output filter to clean input audio
+    const alphaHP = 0.91; // High-pass filter coefficient for ~150Hz cutoff
+    let prevInputHP = 0;
+    let prevOutputHP = 0;
+    
+    // Noise gate: reduce very quiet samples that are likely just noise
+    // Only apply to samples below threshold to preserve speech
+    const noiseGateThreshold = 500; // Amplitude threshold for noise gate
+    const noiseGateRatio = 0.3; // Reduce noise by 70%, keep 30%
+    
+    for (let i = 0; i < sampleCount; i++) {
+      const sample = pcm16Buffer.readInt16LE(i * 2);
+      
+      // High-pass filter: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+      const filteredHP = alphaHP * (prevOutputHP + sample - prevInputHP);
+      prevInputHP = sample;
+      prevOutputHP = filteredHP;
+      
+      // Apply noise gate to very quiet samples
+      const amplitude = Math.abs(filteredHP);
+      let output = filteredHP;
+      if (amplitude < noiseGateThreshold) {
+        // Reduce noise by applying gain reduction
+        output = filteredHP * noiseGateRatio;
+      }
+      
+      const clamped = Math.max(-32768, Math.min(32767, Math.round(output)));
+      cleanedBuffer.writeInt16LE(clamped, i * 2);
+    }
+    
+    return cleanedBuffer;
   }
 
   /**
@@ -767,23 +826,30 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   private pcm16ToMulaw(pcm16Buffer: Buffer): Buffer {
     const mulawBuffer = Buffer.allocUnsafe(pcm16Buffer.length / 2);
     
-    // Standard G.711 μ-law encoding (optimized for accuracy)
+    // Standard G.711 μ-law encoding (optimized for maximum accuracy)
     // Reference: ITU-T G.711 specification
     const BIAS = 33; // Standard G.711 bias
     const MAX = 32635; // Maximum value for μ-law encoding
     
-    // Use a simple smoothing filter to reduce quantization noise
-    let prevSample = 0;
-    const smoothingFactor = 0.1; // Light smoothing to reduce artifacts
+    // Triangular dithering to reduce quantization noise
+    // This helps mask quantization artifacts for cleaner audio
+    let ditherState = 0;
     
     for (let i = 0; i < mulawBuffer.length; i++) {
       // Read 16-bit signed integer (little-endian, as OpenAI sends)
       let sample = pcm16Buffer.readInt16LE(i * 2);
       
-      // Apply light smoothing to reduce quantization noise/artifacts
-      // Only apply minimal smoothing to preserve audio clarity
-      sample = Math.round(sample * (1 - smoothingFactor) + prevSample * smoothingFactor);
-      prevSample = sample;
+      // Apply triangular dithering (high-pass noise) to reduce quantization artifacts
+      // Generate triangular dither: range [-1, 1] with uniform distribution
+      // Simple LCG-based triangular dither
+      ditherState = (ditherState * 1664525 + 1013904223) >>> 0;
+      const rand1 = ((ditherState & 0xFFFF) / 65536.0) - 0.5;
+      ditherState = (ditherState * 1664525 + 1013904223) >>> 0;
+      const rand2 = ((ditherState & 0xFFFF) / 65536.0) - 0.5;
+      const dither = (rand1 + rand2) * 2; // Triangular distribution [-2, 2]
+      
+      // Apply dither before quantization (scaled to ~1 LSB for 16-bit)
+      sample = Math.round(sample + dither * 0.5);
       
       // Get sign bit (bit 15)
       const sign = (sample >>> 15) & 0x01;
@@ -797,17 +863,18 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       // Add bias for proper encoding
       magnitude += BIAS;
       
-      // Find exponent (segment) using efficient threshold checking
-      // This provides accurate segment detection for crystal clear encoding
-      let exponent = 0;
-      if (magnitude >= 0x7FF) exponent = 7;
-      else if (magnitude >= 0x3FF) exponent = 6;
-      else if (magnitude >= 0x1FF) exponent = 5;
-      else if (magnitude >= 0xFF) exponent = 4;
-      else if (magnitude >= 0x7F) exponent = 3;
-      else if (magnitude >= 0x3F) exponent = 2;
-      else if (magnitude >= 0x1F) exponent = 1;
-      // else exponent = 0 (already set)
+      // Find exponent (segment) using efficient bit-based calculation
+      // Use bit counting for precise segment detection
+      let exponent = 7;
+      let temp = magnitude;
+      if (temp < 0x20) exponent = 0;
+      else if (temp < 0x40) exponent = 1;
+      else if (temp < 0x80) exponent = 2;
+      else if (temp < 0x100) exponent = 3;
+      else if (temp < 0x200) exponent = 4;
+      else if (temp < 0x400) exponent = 5;
+      else if (temp < 0x800) exponent = 6;
+      // else exponent = 7 (already set)
       
       // Calculate mantissa (4-bit quantization) from original magnitude
       // Shift right by (exponent + 3) and mask to 4 bits
@@ -835,10 +902,14 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       // Twilio sends audio/x-mulaw at 8kHz
       const pcm16Audio8k = this.mulawToPcm16(audioData);
       
+      // Apply noise reduction to input audio to reduce static
+      // Light noise reduction that won't interfere with VAD
+      const cleanedAudio8k = this.reduceInputNoise(pcm16Audio8k);
+      
       // OpenAI Realtime API expects PCM16 at 24kHz
       // Upsample from 8kHz to 24kHz (1:3 ratio)
       // Note: Don't remove DC offset on input audio as it can interfere with VAD
-      const pcm16Audio24k = this.resample8kTo24k(pcm16Audio8k);
+      const pcm16Audio24k = this.resample8kTo24k(cleanedAudio8k);
       
       // Debug: Check if audio is non-zero (not silence)
       const sampleCount8k = pcm16Audio8k.length / 2; // Each sample is 2 bytes
