@@ -334,6 +334,9 @@ export class OpenAIBridge {
       // Resample from 24kHz to 8kHz
       let pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
       
+      // Apply audio enhancement for crystal clear quality
+      pcm16Buffer8k = this.enhanceAudioQuality(pcm16Buffer8k);
+      
       // Remove DC offset to reduce static and improve audio quality
       pcm16Buffer8k = this.removeDCOffset(pcm16Buffer8k);
       
@@ -570,10 +573,10 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
 
   /**
    * Resample PCM16 audio from 24kHz to 8kHz (3:1 downsampling)
-   * Uses averaging to reduce aliasing artifacts and improve quality
+   * Uses weighted averaging with anti-aliasing for crystal clear audio
    */
   private resample24kTo8k(pcm16Buffer: Buffer): Buffer {
-    // 24kHz to 8kHz is 3:1 ratio - integer ratio, so we can use averaging
+    // 24kHz to 8kHz is 3:1 ratio - integer ratio
     const ratio = 3; // 3 samples become 1
     
     // Each sample is 2 bytes (16-bit)
@@ -581,18 +584,24 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
     const targetSamples = Math.floor(sourceSamples / ratio);
     const targetBuffer = Buffer.allocUnsafe(targetSamples * 2);
     
-    // For each target sample, average the corresponding 3 source samples
-    // This reduces aliasing and provides better quality than simple decimation
+    // Use weighted averaging with a simple low-pass filter to reduce aliasing
+    // This provides better quality than simple averaging
     for (let i = 0; i < targetSamples; i++) {
       const sourceStart = i * ratio;
       
-      // Average the 3 samples to reduce aliasing
+      // Use weighted average with more weight on center sample (reduces aliasing)
+      // Weights: [0.25, 0.5, 0.25] for better frequency response
       let sum = 0;
+      let weightSum = 0;
+      
       for (let j = 0; j < ratio && (sourceStart + j) < sourceSamples; j++) {
-        sum += pcm16Buffer.readInt16LE((sourceStart + j) * 2);
+        const weight = j === 1 ? 0.5 : 0.25; // Center sample gets more weight
+        const sample = pcm16Buffer.readInt16LE((sourceStart + j) * 2);
+        sum += sample * weight;
+        weightSum += weight;
       }
       
-      const average = Math.round(sum / ratio);
+      const average = Math.round(sum / weightSum);
       
       // Clamp to 16-bit range
       const clamped = Math.max(-32768, Math.min(32767, average));
@@ -606,7 +615,7 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
 
   /**
    * Resample PCM16 audio from 8kHz to 24kHz (1:3 upsampling)
-   * Uses linear interpolation with edge smoothing to reduce artifacts
+   * Uses cubic interpolation for smoother, clearer audio
    */
   private resample8kTo24k(pcm16Buffer: Buffer): Buffer {
     // 8kHz to 24kHz is 1:3 ratio - integer ratio, so we can optimize
@@ -617,35 +626,102 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
     const targetSamples = sourceSamples * ratio;
     const targetBuffer = Buffer.allocUnsafe(targetSamples * 2);
     
-    // For each source sample, create 3 output samples using interpolation
+    // For each source sample, create 3 output samples using cubic interpolation
     for (let i = 0; i < sourceSamples; i++) {
       const sourceIdx = i * 2;
       const targetIdx = i * ratio * 2;
       
-      // Read current and next source samples
+      // Get surrounding samples for cubic interpolation
+      const samplePrev = i > 0 ? pcm16Buffer.readInt16LE(sourceIdx - 2) : pcm16Buffer.readInt16LE(sourceIdx);
       const sample0 = pcm16Buffer.readInt16LE(sourceIdx);
-      const sample1 = i < sourceSamples - 1 
-        ? pcm16Buffer.readInt16LE(sourceIdx + 2)
-        : sample0; // Use same sample at end
+      const sample1 = i < sourceSamples - 1 ? pcm16Buffer.readInt16LE(sourceIdx + 2) : sample0;
+      const sampleNext = i < sourceSamples - 2 ? pcm16Buffer.readInt16LE(sourceIdx + 4) : sample1;
       
-      // Create 3 output samples with smooth interpolation
+      // Create 3 output samples using cubic Hermite interpolation for smoother audio
       // Sample 0: exactly source sample (t=0.0)
       targetBuffer.writeInt16LE(sample0, targetIdx);
       
-      // Sample 1: interpolated between sample0 and sample1 (t=0.33)
+      // Sample 1: cubic interpolated (t=0.33)
       const t1 = 1 / 3;
-      const interpolated1 = Math.round(sample0 * (1 - t1) + sample1 * t1);
+      const interpolated1 = this.cubicInterpolate(samplePrev, sample0, sample1, sampleNext, t1);
       const clamped1 = Math.max(-32768, Math.min(32767, interpolated1));
       targetBuffer.writeInt16LE(clamped1, targetIdx + 2);
       
-      // Sample 2: interpolated between sample0 and sample1 (t=0.67)
+      // Sample 2: cubic interpolated (t=0.67)
       const t2 = 2 / 3;
-      const interpolated2 = Math.round(sample0 * (1 - t2) + sample1 * t2);
+      const interpolated2 = this.cubicInterpolate(samplePrev, sample0, sample1, sampleNext, t2);
       const clamped2 = Math.max(-32768, Math.min(32767, interpolated2));
       targetBuffer.writeInt16LE(clamped2, targetIdx + 4);
     }
     
     return targetBuffer;
+  }
+
+  /**
+   * Cubic Hermite interpolation for smooth audio resampling
+   * Provides better quality than linear interpolation
+   */
+  private cubicInterpolate(y0: number, y1: number, y2: number, y3: number, t: number): number {
+    // Cubic Hermite interpolation using Catmull-Rom spline
+    const t2 = t * t;
+    const t3 = t2 * t;
+    
+    const a = -0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3;
+    const b = y0 - 2.5 * y1 + 2 * y2 - 0.5 * y3;
+    const c = -0.5 * y0 + 0.5 * y2;
+    const d = y1;
+    
+    return a * t3 + b * t2 + c * t + d;
+  }
+
+  /**
+   * Enhance audio quality with high-pass filtering and normalization
+   * Applied to output audio (AI → Twilio) for crystal clear sound
+   */
+  private enhanceAudioQuality(pcm16Buffer: Buffer): Buffer {
+    const sampleCount = pcm16Buffer.length / 2;
+    if (sampleCount === 0) return pcm16Buffer;
+    
+    const enhancedBuffer = Buffer.from(pcm16Buffer);
+    
+    // High-pass filter to remove low-frequency noise/hum (below ~80Hz at 8kHz)
+    // First-order IIR high-pass filter with cutoff at ~80Hz
+    // For 8kHz sample rate: fc = 80Hz, RC = 1/(2*π*fc) = ~0.002s
+    // alpha = RC / (RC + 1/sampleRate) = RC / (RC + 0.000125) ≈ 0.94
+    const alpha = 0.94; // Filter coefficient for ~80Hz cutoff at 8kHz
+    let prevInput = 0;
+    let prevOutput = 0;
+    
+    // Normalize audio to maximize clarity (prevent clipping)
+    let maxAmplitude = 0;
+    const samples: number[] = [];
+    
+    // First pass: Apply high-pass filter and find max amplitude
+    for (let i = 0; i < sampleCount; i++) {
+      const sample = pcm16Buffer.readInt16LE(i * 2);
+      
+      // First-order high-pass filter: y[n] = alpha * (y[n-1] + x[n] - x[n-1])
+      const filtered = alpha * (prevOutput + sample - prevInput);
+      prevInput = sample;
+      prevOutput = filtered;
+      
+      const filteredInt = Math.round(filtered);
+      samples.push(filteredInt);
+      maxAmplitude = Math.max(maxAmplitude, Math.abs(filteredInt));
+    }
+    
+    // Second pass: Normalize to ~92% of max range for optimal clarity
+    // Only normalize if audio is not already at good levels
+    const targetMax = 30145; // ~92% of 32767 for headroom
+    const normalizationFactor = maxAmplitude > targetMax ? targetMax / maxAmplitude : 1.0;
+    
+    for (let i = 0; i < sampleCount; i++) {
+      const normalized = Math.round(samples[i] * normalizationFactor);
+      const clamped = Math.max(-32768, Math.min(32767, normalized));
+      enhancedBuffer.writeInt16LE(clamped, i * 2);
+    }
+    
+    return enhancedBuffer;
   }
 
   /**
@@ -691,14 +767,23 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   private pcm16ToMulaw(pcm16Buffer: Buffer): Buffer {
     const mulawBuffer = Buffer.allocUnsafe(pcm16Buffer.length / 2);
     
-    // Standard G.711 μ-law encoding
+    // Standard G.711 μ-law encoding (optimized for accuracy)
     // Reference: ITU-T G.711 specification
-    const BIAS = 33; // Standard G.711 bias (same as decoding)
+    const BIAS = 33; // Standard G.711 bias
     const MAX = 32635; // Maximum value for μ-law encoding
+    
+    // Use a simple smoothing filter to reduce quantization noise
+    let prevSample = 0;
+    const smoothingFactor = 0.1; // Light smoothing to reduce artifacts
     
     for (let i = 0; i < mulawBuffer.length; i++) {
       // Read 16-bit signed integer (little-endian, as OpenAI sends)
       let sample = pcm16Buffer.readInt16LE(i * 2);
+      
+      // Apply light smoothing to reduce quantization noise/artifacts
+      // Only apply minimal smoothing to preserve audio clarity
+      sample = Math.round(sample * (1 - smoothingFactor) + prevSample * smoothingFactor);
+      prevSample = sample;
       
       // Get sign bit (bit 15)
       const sign = (sample >>> 15) & 0x01;
@@ -712,8 +797,8 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       // Add bias for proper encoding
       magnitude += BIAS;
       
-      // Find exponent (segment) - use bit counting for accuracy
-      // This is more accurate than threshold checking
+      // Find exponent (segment) using efficient threshold checking
+      // This provides accurate segment detection for crystal clear encoding
       let exponent = 0;
       if (magnitude >= 0x7FF) exponent = 7;
       else if (magnitude >= 0x3FF) exponent = 6;
@@ -724,7 +809,7 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       else if (magnitude >= 0x1F) exponent = 1;
       // else exponent = 0 (already set)
       
-      // Calculate mantissa (4-bit quantization)
+      // Calculate mantissa (4-bit quantization) from original magnitude
       // Shift right by (exponent + 3) and mask to 4 bits
       const mantissa = (magnitude >> (exponent + 3)) & 0x0F;
       
