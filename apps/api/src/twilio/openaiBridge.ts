@@ -101,15 +101,13 @@ export class OpenAIBridge {
         console.log("OpenAI Realtime WebSocket connected");
         this.session.state = "connected";
         
-        // Configure the session once connected
-        await this.configureSession(agentProfile, systemPrompt);
-        
-        this.isInitialized = true;
-        
-        // Send initial greeting after session is configured
-        setTimeout(() => {
-          this.sendInitialGreeting();
-        }, 1000);
+      // Configure the session once connected
+      await this.configureSession(agentProfile, systemPrompt);
+      
+      this.isInitialized = true;
+      
+      // Wait for session.updated confirmation before sending greeting
+      // The greeting will be sent after session.updated event is received
       });
 
       ws.on("message", (data: Buffer) => {
@@ -225,6 +223,15 @@ export class OpenAIBridge {
         if (message.transcript) {
           this.callSession.transcript.push(`Caller: ${message.transcript}`);
         }
+        break;
+
+      case "session.updated":
+        console.log("OpenAI session updated - session is ready");
+        // Session configuration confirmed - now send initial greeting
+        // Small delay to ensure session is fully ready
+        setTimeout(() => {
+          this.sendInitialGreeting();
+        }, 500);
         break;
 
       case "response.function_call_arguments.done":
@@ -383,8 +390,13 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           instructions: systemPrompt,
           voice: agentProfile.voice || "alloy",
           temperature: 0.8,
+          // Twilio sends audio/x-mulaw (G.711 μ-law) at 8kHz
+          // OpenAI Realtime API requires pcm16 at 24kHz, but we can try 8kHz first
+          // Note: May need audio conversion library if 8kHz doesn't work
           input_audio_format: "pcm16",
           output_audio_format: "pcm16",
+          input_audio_sample_rate: 8000,
+          output_audio_sample_rate: 8000,
           input_audio_transcription: {
             model: "whisper-1",
           },
@@ -422,12 +434,13 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
     console.log(`Sending initial greeting: ${greeting}`);
     
     try {
-      // Trigger the AI to respond by creating a response
-      // The system prompt instructs it to start with the greeting
+      // Trigger the AI to respond by creating a response with the greeting text
+      // This tells the AI what to say initially
       this.sendToOpenAI({
         type: "response.create",
         response: {
           modalities: ["audio"],
+          input_text: greeting, // Tell the AI what to say
         },
       });
 
