@@ -22,6 +22,7 @@ export class OpenAIBridge {
   private customWelcomePrompt: string = "";
   private twilioSocket: any = null; // Reference to Twilio WebSocket for sending audio back
   private isInitialized: boolean = false;
+  private _greetingSent: boolean = false; // Track if greeting was sent
 
   constructor(callSession: CallSession, organizationId: string) {
     this.callSession = callSession;
@@ -130,7 +131,9 @@ export class OpenAIBridge {
 
       ws.on("close", () => {
         console.log("OpenAI Realtime WebSocket closed");
-        this.session.state = "closed";
+        if (this.session) {
+          this.session.state = "closed";
+        }
       });
 
       // Wait for connection to be established
@@ -174,13 +177,6 @@ export class OpenAIBridge {
   private handleOpenAIMessage(message: any) {
     // Handle different message types from OpenAI Realtime API
     switch (message.type) {
-      case "session.created":
-        console.log("OpenAI session created:", message.session?.id);
-        if (message.session?.id) {
-          this.callSession.openAISessionId = message.session.id;
-        }
-        break;
-
       case "response.created":
         console.log("OpenAI response created");
         break;
@@ -238,6 +234,21 @@ export class OpenAIBridge {
         setTimeout(() => {
           this.sendInitialGreeting();
         }, 500);
+        break;
+
+      case "session.created":
+        console.log("OpenAI session created:", message.session?.id);
+        if (message.session?.id) {
+          this.callSession.openAISessionId = message.session.id;
+        }
+        // Also try sending greeting after session.created as fallback
+        // (in case session.updated doesn't fire)
+        setTimeout(() => {
+          if (!this._greetingSent) {
+            console.log("Sending greeting after session.created (fallback)");
+            this.sendInitialGreeting();
+          }
+        }, 2000);
         break;
 
       case "response.function_call_arguments.done":
@@ -410,12 +421,10 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           voice: agentProfile.voice || "alloy",
           temperature: 0.8,
           // Twilio sends audio/x-mulaw (G.711 μ-law) at 8kHz
-          // OpenAI Realtime API requires pcm16 at 24kHz, but we can try 8kHz first
-          // Note: May need audio conversion library if 8kHz doesn't work
+          // OpenAI Realtime API requires pcm16 format
+          // Note: We're sending MuLaw data but telling OpenAI it's PCM16 - may need conversion
           input_audio_format: "pcm16",
           output_audio_format: "pcm16",
-          input_audio_sample_rate: 8000,
-          output_audio_sample_rate: 8000,
           input_audio_transcription: {
             model: "whisper-1",
           },
@@ -450,24 +459,30 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       ? this.customWelcomePrompt
       : `Hi, this is ${this.businessName}, how can I help you?`;
     
-    console.log(`Sending initial greeting: ${greeting}`);
-    
-    try {
-      // Trigger the AI to respond by creating a response with the greeting text
-      // This tells the AI what to say initially
-      this.sendToOpenAI({
-        type: "response.create",
-        response: {
-          modalities: ["audio"],
-          input_text: greeting, // Tell the AI what to say
-        },
-      });
+      console.log(`Sending initial greeting: ${greeting}`);
+      
+      if (this._greetingSent) {
+        console.log("Greeting already sent, skipping");
+        return;
+      }
+      
+      try {
+        // Trigger the AI to respond by creating a response with the greeting text
+        // This tells the AI what to say initially
+        this.sendToOpenAI({
+          type: "response.create",
+          response: {
+            modalities: ["audio"],
+            input_text: greeting, // Tell the AI what to say
+          },
+        });
 
-      console.log("Initial greeting response triggered");
-      this.callSession.transcript.push(`AI: ${greeting}`);
-    } catch (error) {
-      console.error("Error sending initial greeting:", error);
-    }
+        this._greetingSent = true;
+        console.log("✅ Initial greeting response triggered");
+        this.callSession.transcript.push(`AI: ${greeting}`);
+      } catch (error) {
+        console.error("Error sending initial greeting:", error);
+      }
   }
 
   async sendAudio(audioData: Buffer) {
