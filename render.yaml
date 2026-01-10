@@ -3,7 +3,7 @@ services:
     name: coordi-api
     runtime: node
     rootDir: apps/api
-    buildCommand: npm install && npm run build --workspace=@coordi/shared && npm run build && npm run prisma:generate && npx prisma migrate deploy --schema=./prisma/schema.prisma
+    buildCommand: npm install && npm run build --workspace=@coordi/shared && npm run build && npm run prisma:generate && npx prisma db push --schema=./prisma/schema.prisma
     startCommand: npm run start
     envVars:
       - key: NODE_ENV
