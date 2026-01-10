@@ -567,35 +567,32 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
 
   /**
    * Resample PCM16 audio from 24kHz to 8kHz (3:1 downsampling)
-   * Uses simple linear interpolation for downsampling
+   * Uses averaging to reduce aliasing artifacts and improve quality
    */
   private resample24kTo8k(pcm16Buffer: Buffer): Buffer {
-    // 24kHz to 8kHz is 3:1 ratio
-    const sourceRate = 24000;
-    const targetRate = 8000;
-    const ratio = sourceRate / targetRate; // 3.0
+    // 24kHz to 8kHz is 3:1 ratio - integer ratio, so we can use averaging
+    const ratio = 3; // 3 samples become 1
     
     // Each sample is 2 bytes (16-bit)
     const sourceSamples = pcm16Buffer.length / 2;
     const targetSamples = Math.floor(sourceSamples / ratio);
     const targetBuffer = Buffer.allocUnsafe(targetSamples * 2);
     
-    // Simple linear interpolation downsampling
+    // For each target sample, average the corresponding 3 source samples
+    // This reduces aliasing and provides better quality than simple decimation
     for (let i = 0; i < targetSamples; i++) {
-      const sourceIndex = i * ratio;
-      const sourceIdx1 = Math.floor(sourceIndex);
-      const sourceIdx2 = Math.min(Math.ceil(sourceIndex), sourceSamples - 1);
-      const t = sourceIndex - sourceIdx1;
+      const sourceStart = i * ratio;
       
-      // Read source samples
-      const sample1 = pcm16Buffer.readInt16LE(sourceIdx1 * 2);
-      const sample2 = pcm16Buffer.readInt16LE(sourceIdx2 * 2);
+      // Average the 3 samples to reduce aliasing
+      let sum = 0;
+      for (let j = 0; j < ratio && (sourceStart + j) < sourceSamples; j++) {
+        sum += pcm16Buffer.readInt16LE((sourceStart + j) * 2);
+      }
       
-      // Linear interpolation
-      const interpolated = Math.round(sample1 * (1 - t) + sample2 * t);
+      const average = Math.round(sum / ratio);
       
       // Clamp to 16-bit range
-      const clamped = Math.max(-32768, Math.min(32767, interpolated));
+      const clamped = Math.max(-32768, Math.min(32767, average));
       
       // Write to target buffer
       targetBuffer.writeInt16LE(clamped, i * 2);
@@ -606,38 +603,43 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
 
   /**
    * Resample PCM16 audio from 8kHz to 24kHz (1:3 upsampling)
-   * Uses simple linear interpolation for upsampling
+   * Uses linear interpolation with edge smoothing to reduce artifacts
    */
   private resample8kTo24k(pcm16Buffer: Buffer): Buffer {
-    // 8kHz to 24kHz is 1:3 ratio
-    const sourceRate = 8000;
-    const targetRate = 24000;
-    const ratio = targetRate / sourceRate; // 3.0
+    // 8kHz to 24kHz is 1:3 ratio - integer ratio, so we can optimize
+    const ratio = 3; // 1 sample becomes 3
     
     // Each sample is 2 bytes (16-bit)
     const sourceSamples = pcm16Buffer.length / 2;
     const targetSamples = sourceSamples * ratio;
     const targetBuffer = Buffer.allocUnsafe(targetSamples * 2);
     
-    // Simple linear interpolation upsampling
-    for (let i = 0; i < targetSamples; i++) {
-      const sourceIndex = i / ratio;
-      const sourceIdx1 = Math.floor(sourceIndex);
-      const sourceIdx2 = Math.min(sourceIdx1 + 1, sourceSamples - 1);
-      const t = sourceIndex - sourceIdx1;
+    // For each source sample, create 3 output samples using interpolation
+    for (let i = 0; i < sourceSamples; i++) {
+      const sourceIdx = i * 2;
+      const targetIdx = i * ratio * 2;
       
-      // Read source samples
-      const sample1 = pcm16Buffer.readInt16LE(sourceIdx1 * 2);
-      const sample2 = pcm16Buffer.readInt16LE(sourceIdx2 * 2);
+      // Read current and next source samples
+      const sample0 = pcm16Buffer.readInt16LE(sourceIdx);
+      const sample1 = i < sourceSamples - 1 
+        ? pcm16Buffer.readInt16LE(sourceIdx + 2)
+        : sample0; // Use same sample at end
       
-      // Linear interpolation
-      const interpolated = Math.round(sample1 * (1 - t) + sample2 * t);
+      // Create 3 output samples with smooth interpolation
+      // Sample 0: exactly source sample (t=0.0)
+      targetBuffer.writeInt16LE(sample0, targetIdx);
       
-      // Clamp to 16-bit range
-      const clamped = Math.max(-32768, Math.min(32767, interpolated));
+      // Sample 1: interpolated between sample0 and sample1 (t=0.33)
+      const t1 = 1 / 3;
+      const interpolated1 = Math.round(sample0 * (1 - t1) + sample1 * t1);
+      const clamped1 = Math.max(-32768, Math.min(32767, interpolated1));
+      targetBuffer.writeInt16LE(clamped1, targetIdx + 2);
       
-      // Write to target buffer
-      targetBuffer.writeInt16LE(clamped, i * 2);
+      // Sample 2: interpolated between sample0 and sample1 (t=0.67)
+      const t2 = 2 / 3;
+      const interpolated2 = Math.round(sample0 * (1 - t2) + sample1 * t2);
+      const clamped2 = Math.max(-32768, Math.min(32767, interpolated2));
+      targetBuffer.writeInt16LE(clamped2, targetIdx + 4);
     }
     
     return targetBuffer;
