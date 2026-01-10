@@ -10,15 +10,27 @@ export class TwilioStreamHandler {
   private openAIBridge: OpenAIBridge | null = null;
   private reqUrl: string | undefined;
 
-  constructor(socket: WebSocket, req?: any) {
-    // In @fastify/websocket v10, the handler receives the WebSocket directly
-    if (!socket || typeof socket.on !== "function") {
-      console.error("Invalid socket object:", {
-        socketType: typeof socket,
-        socketKeys: socket ? Object.keys(socket) : [],
-        hasOn: typeof socket?.on,
+  constructor(connection: WebSocket | any, req?: any) {
+    // Handle both WebSocket directly or wrapper object (SocketStream) with .socket property
+    // In @fastify/websocket v10, it might be either depending on configuration
+    let socket: WebSocket;
+    
+    // Check if connection has a .socket property (wrapper) or is the socket itself
+    if (connection?.socket && typeof connection.socket.on === "function") {
+      socket = connection.socket;
+      console.log("Using socket from connection.socket (wrapper)");
+    } else if (connection && typeof connection.on === "function") {
+      socket = connection;
+      console.log("Using connection directly as WebSocket");
+    } else {
+      console.error("Invalid connection object:", {
+        connectionType: typeof connection,
+        connectionKeys: connection ? Object.keys(connection) : [],
+        hasSocket: !!connection?.socket,
+        hasOn: typeof connection?.on,
+        socketHasOn: typeof connection?.socket?.on,
       });
-      throw new Error("Invalid socket: missing 'on' method");
+      throw new Error("Invalid connection: missing WebSocket");
     }
     
     this.socket = socket;
