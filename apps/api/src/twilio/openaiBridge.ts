@@ -365,6 +365,7 @@ export class OpenAIBridge {
   }
   
   private _audioChunkCount: number = 0;
+  private _inputAudioChunkCount: number = 0;
 
   private buildSystemPrompt(profile: any): string {
     const org = profile.organization;
