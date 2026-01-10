@@ -102,50 +102,44 @@ export class TwilioStreamHandler {
     console.log("=== Twilio START Event Debug ===");
     console.log("Full data object:", JSON.stringify(data, null, 2));
     console.log("Data keys:", Object.keys(data));
-    console.log("callSid directly:", data.callSid);
-    console.log("streamSid:", data.streamSid);
-    console.log("accountSid:", data.accountSid);
-    console.log("customParameters:", data.customParameters);
-    if (data.customParameters) {
-      console.log("Custom parameter keys:", Object.keys(data.customParameters));
-      console.log("Custom CallSid:", data.customParameters.CallSid);
-      console.log("Custom From:", data.customParameters.From);
-      console.log("Custom To:", data.customParameters.To);
-    }
+    
+    // Twilio sends start event data in a nested structure: data.start.{callSid, customParameters, etc.}
+    // The actual data is nested inside a "start" property when event is "start"
+    const startData = (data as any).start || {};
+    const customParams = startData.customParameters || data.customParameters || {};
+    
+    console.log("start object:", JSON.stringify(startData, null, 2));
+    console.log("callSid from data.start.callSid:", startData.callSid);
+    console.log("callSid from top level data.callSid:", data.callSid);
+    console.log("streamSid from top level data.streamSid:", data.streamSid);
+    console.log("streamSid from data.start.streamSid:", startData.streamSid);
+    console.log("customParameters from data.start.customParameters:", JSON.stringify(startData.customParameters));
+    console.log("customParameters from top level:", JSON.stringify(data.customParameters));
     
     // Get callSid from multiple possible locations
-    // Twilio might provide it in different places depending on version/config
-    // Also check URL query parameters if available
-    let callSidFromUrl: string | undefined;
-    if (this.reqUrl) {
-      try {
-        const url = new URL(this.reqUrl, "https://dummy.com");
-        callSidFromUrl = url.searchParams.get("CallSid") || url.searchParams.get("callSid") || undefined;
-      } catch (e) {
-        // URL parsing failed, ignore
-      }
-    }
+    // Priority: 1. data.start.callSid (most common in Twilio Media Streams)
+    //           2. data.start.customParameters.CallSid (from TwiML parameters)
+    //           3. data.callSid (top level, less common)
+    const callSid = startData.callSid 
+      || customParams.CallSid 
+      || customParams.callSid
+      || data.callSid 
+      || (data as any).CallSid;
     
-    const callSid = data.callSid 
-      || data.customParameters?.CallSid 
-      || data.customParameters?.callSid
-      || callSidFromUrl
-      || (data as any).CallSid; // Sometimes it's capitalized
-    
-    if (callSidFromUrl) {
-      console.log("Found callSid in URL query params:", callSidFromUrl);
-    }
-    
-    const streamSid = data.streamSid;
+    // StreamSid can be at top level (most common) or nested in start object
+    const streamSid = data.streamSid || startData.streamSid;
     
     console.log("Extracted values:", { callSid, streamSid });
+    console.log("Custom params:", customParams);
     
     if (!callSid || !streamSid) {
       console.error("❌ CRITICAL: Missing callSid or streamSid", {
         callSid: !!callSid,
         streamSid: !!streamSid,
-        hasCustomParams: !!data.customParameters,
-        customParamKeys: data.customParameters ? Object.keys(data.customParameters) : [],
+        hasStartObject: !!(data as any).start,
+        startDataKeys: startData ? Object.keys(startData) : [],
+        hasCustomParams: !!customParams,
+        customParamKeys: customParams ? Object.keys(customParams) : [],
         allDataKeys: Object.keys(data),
       });
       console.error("Cannot proceed without callSid. Check TwiML parameters.");
