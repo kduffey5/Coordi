@@ -324,15 +324,18 @@ export class OpenAIBridge {
     }
 
     try {
-      // OpenAI sends PCM16 audio (base64 encoded)
-      // Twilio expects MuLaw audio (base64 encoded)
-      // We need to convert PCM16 → MuLaw
+      // OpenAI sends PCM16 audio at 24kHz (base64 encoded)
+      // Twilio expects MuLaw audio at 8kHz (base64 encoded)
+      // We need to: resample 24kHz → 8kHz, then convert PCM16 → MuLaw
       
-      // Decode base64 PCM16 audio
-      const pcm16Buffer = Buffer.from(audioBase64, "base64");
+      // Decode base64 PCM16 audio (24kHz)
+      const pcm16Buffer24k = Buffer.from(audioBase64, "base64");
+      
+      // Resample from 24kHz to 8kHz
+      const pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
       
       // Convert PCM16 to MuLaw
-      const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer);
+      const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer8k);
       
       // Encode MuLaw to base64 for Twilio
       const mulawBase64 = mulawBuffer.toString("base64");
@@ -434,10 +437,10 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           voice: agentProfile.voice || "alloy",
           temperature: 0.8,
           // Twilio sends audio/x-mulaw (G.711 μ-law) at 8kHz
-          // OpenAI Realtime API requires pcm16 format at 8kHz to match Twilio
+          // OpenAI Realtime API outputs pcm16 at 24kHz (default)
+          // We'll resample from 24kHz to 8kHz before converting to MuLaw
           input_audio_format: "pcm16",
           output_audio_format: "pcm16",
-          sample_rate: 8000, // Match Twilio's 8kHz sample rate
           input_audio_transcription: {
             model: "whisper-1",
           },
@@ -552,6 +555,45 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
     }
     
     return pcm16Buffer;
+  }
+
+  /**
+   * Resample PCM16 audio from 24kHz to 8kHz (3:1 downsampling)
+   * Uses simple linear interpolation for downsampling
+   */
+  private resample24kTo8k(pcm16Buffer: Buffer): Buffer {
+    // 24kHz to 8kHz is 3:1 ratio
+    const sourceRate = 24000;
+    const targetRate = 8000;
+    const ratio = sourceRate / targetRate; // 3.0
+    
+    // Each sample is 2 bytes (16-bit)
+    const sourceSamples = pcm16Buffer.length / 2;
+    const targetSamples = Math.floor(sourceSamples / ratio);
+    const targetBuffer = Buffer.allocUnsafe(targetSamples * 2);
+    
+    // Simple linear interpolation downsampling
+    for (let i = 0; i < targetSamples; i++) {
+      const sourceIndex = i * ratio;
+      const sourceIdx1 = Math.floor(sourceIndex);
+      const sourceIdx2 = Math.min(Math.ceil(sourceIndex), sourceSamples - 1);
+      const t = sourceIndex - sourceIdx1;
+      
+      // Read source samples
+      const sample1 = pcm16Buffer.readInt16LE(sourceIdx1 * 2);
+      const sample2 = pcm16Buffer.readInt16LE(sourceIdx2 * 2);
+      
+      // Linear interpolation
+      const interpolated = Math.round(sample1 * (1 - t) + sample2 * t);
+      
+      // Clamp to 16-bit range
+      const clamped = Math.max(-32768, Math.min(32767, interpolated));
+      
+      // Write to target buffer
+      targetBuffer.writeInt16LE(clamped, i * 2);
+    }
+    
+    return targetBuffer;
   }
 
   /**
