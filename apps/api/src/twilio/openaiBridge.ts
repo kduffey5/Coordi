@@ -529,25 +529,32 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   private mulawToPcm16(mulawBuffer: Buffer): Buffer {
     const pcm16Buffer = Buffer.allocUnsafe(mulawBuffer.length * 2);
     
-    // MuLaw to PCM16 conversion table (standard G.711 algorithm)
-    const MULAW_BIAS = 0x84;
-    const MULAW_SEG_SHIFT = 0x04;
-    const MULAW_SEG_MASK = 0x70;
+    // Standard G.711 μ-law to PCM16 conversion algorithm
+    // Reference: ITU-T G.711 specification
+    const BIAS = 33; // Standard G.711 bias value
     
     for (let i = 0; i < mulawBuffer.length; i++) {
-      let mulaw = mulawBuffer[i] ^ 0xFF; // Invert all bits
+      // Step 1: Invert all bits (μ-law encoding uses bit inversion)
+      let mulaw = mulawBuffer[i] ^ 0xFF;
       
-      // Extract sign bit
+      // Step 2: Extract sign bit (bit 7: 0 = positive, 1 = negative)
       const sign = (mulaw & 0x80) ? -1 : 1;
-      const exponent = (mulaw & MULAW_SEG_MASK) >> MULAW_SEG_SHIFT;
-      const mantissa = (mulaw & 0x0F) | 0x10;
       
-      // Calculate sample
-      let sample = mantissa << (exponent + 2);
-      sample -= MULAW_BIAS;
+      // Step 3: Extract segment (exponent, bits 6-4)
+      const segment = (mulaw & 0x70) >> 4;
+      
+      // Step 4: Extract quantization level (mantissa, bits 3-0)
+      const quantization = mulaw & 0x0F;
+      
+      // Step 5: Calculate sample using standard G.711 formula:
+      // sample = ((quantization * 2 + 33) << segment) - 33
+      let sample = ((quantization << 1) + BIAS) << segment;
+      sample -= BIAS;
+      
+      // Step 6: Apply sign
       sample *= sign;
       
-      // Clamp to 16-bit signed integer range
+      // Step 7: Clamp to 16-bit signed integer range
       sample = Math.max(-32768, Math.min(32767, sample));
       
       // Write as little-endian 16-bit signed integer
@@ -662,6 +669,26 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       // Convert MuLaw (from Twilio) to PCM16 (required by OpenAI)
       // Twilio sends audio/x-mulaw at 8kHz, OpenAI expects pcm16 at 8kHz
       const pcm16Audio = this.mulawToPcm16(audioData);
+      
+      // Debug: Check if audio is non-zero (not silence)
+      const sampleCount = pcm16Audio.length / 2; // Each sample is 2 bytes
+      let nonZeroSamples = 0;
+      let maxAmplitude = 0;
+      for (let i = 0; i < sampleCount; i++) {
+        const sample = pcm16Audio.readInt16LE(i * 2);
+        if (sample !== 0) nonZeroSamples++;
+        maxAmplitude = Math.max(maxAmplitude, Math.abs(sample));
+      }
+      
+      // Log audio statistics for first few chunks to verify conversion
+      if (!this._inputAudioChunkCount) this._inputAudioChunkCount = 0;
+      this._inputAudioChunkCount++;
+      if (this._inputAudioChunkCount <= 5) {
+        console.log(`📥 Input audio chunk #${this._inputAudioChunkCount}: MuLaw ${audioData.length} bytes → PCM16 ${pcm16Audio.length} bytes, ${nonZeroSamples}/${sampleCount} non-zero samples, max amplitude: ${maxAmplitude}`);
+        // Log first few MuLaw bytes to see if they're all the same
+        const firstBytes = Array.from(audioData.slice(0, Math.min(10, audioData.length))).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' ');
+        console.log(`   First MuLaw bytes: ${firstBytes}`);
+      }
       
       // Convert PCM16 buffer to base64
       const base64Audio = pcm16Audio.toString("base64");
