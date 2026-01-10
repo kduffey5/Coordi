@@ -7,6 +7,55 @@ export interface ApiResponse<T> {
   error?: string;
 }
 
+export interface Call {
+  id: string;
+  organizationId: string;
+  fromNumber: string;
+  toNumber: string;
+  twilioCallSid?: string | null;
+  startTime: string;
+  endTime?: string | null;
+  durationSeconds?: number | null;
+  outcome?: string | null;
+  recordingUrl?: string | null;
+  transcript?: string | null;
+  summary?: string | null;
+  lead?: Lead | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Lead {
+  id: string;
+  organizationId: string;
+  callId?: string | null;
+  name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  serviceRequested?: string | null;
+  scheduledDate?: string | null;
+  status: string;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  call?: Call | null;
+}
+
+export interface CallsResponse {
+  calls: Call[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface LeadsResponse {
+  leads: Lead[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 class ApiClient {
   private baseUrl: string;
   private token: string | null = null;
@@ -137,11 +186,11 @@ class ApiClient {
 
   // Calls
   async getCalls(limit = 50, offset = 0) {
-    return this.request(`/api/calls?limit=${limit}&offset=${offset}`);
+    return this.request<CallsResponse>(`/api/calls?limit=${limit}&offset=${offset}`);
   }
 
   async getCall(id: string) {
-    return this.request(`/api/calls/${id}`);
+    return this.request<Call>(`/api/calls/${id}`);
   }
 
   // Leads
@@ -151,11 +200,11 @@ class ApiClient {
       offset: offset.toString(),
     });
     if (status) params.append("status", status);
-    return this.request(`/api/leads?${params}`);
+    return this.request<LeadsResponse>(`/api/leads?${params}`);
   }
 
   async getLead(id: string) {
-    return this.request(`/api/leads/${id}`);
+    return this.request<Lead>(`/api/leads/${id}`);
   }
 
   async updateLead(id: string, data: any) {
