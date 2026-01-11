@@ -236,10 +236,10 @@ export class OpenAIBridge {
       case "session.updated":
         console.log("OpenAI session updated - session is ready");
         // Session configuration confirmed - now send initial greeting
-        // Small delay to ensure session is fully ready
+        // Minimal delay to start greeting quickly
         setTimeout(() => {
           this.sendInitialGreeting();
-        }, 500);
+        }, 100);
         break;
 
       case "session.created":
@@ -254,7 +254,7 @@ export class OpenAIBridge {
             console.log("Sending greeting after session.created (fallback)");
             this.sendInitialGreeting();
           }
-        }, 2000);
+        }, 800);
         break;
 
       case "response.function_call_arguments.done":
@@ -508,6 +508,8 @@ Your job is to:
 4. Use tools to create leads, book appointments, or send SMS
 5. Be helpful and never sound like a robot
 6. If you don't know something, politely say you'll have someone follow up
+7. Speak at a natural, conversational pace - like you're talking to a friend, not reading a script
+8. Keep your responses concise and natural - don't speak slowly or robotically
 
 Available tools:
 - create_lead: Use when you have the caller's name and contact info
@@ -515,7 +517,7 @@ Available tools:
 - send_sms: Use to send follow-up text messages
 - escalate_to_human: Use if caller specifically requests to talk to a person
 
-Always be natural, friendly, and conversational. Speak in English unless the caller clearly requests otherwise.`;
+Always be natural, friendly, and conversational. Speak at a normal human pace - not slow or robotic. Speak in English unless the caller clearly requests otherwise.`;
 
     // Store business name for initial greeting
     this.businessName = businessName;
@@ -611,8 +613,8 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           },
         });
         
-        // Small delay to ensure conversation item is processed
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // Minimal delay to ensure conversation item is processed
+        await new Promise(resolve => setTimeout(resolve, 100));
         
         // Now create a response - AI should respond with greeting from system prompt
         // Must use ['audio', 'text'] - OpenAI doesn't support ['audio'] alone
