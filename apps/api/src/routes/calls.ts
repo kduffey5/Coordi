@@ -11,7 +11,7 @@ const callRoutes: FastifyPluginAsync = async (fastify) => {
     const limit = Number((request.query as { limit?: string }).limit) || 50;
     const offset = Number((request.query as { offset?: string }).offset) || 0;
 
-    const calls = await prisma.call.findMany({
+    const calls = await prisma.conversation.findMany({
       where: { organizationId },
       orderBy: { startTime: "desc" },
       take: limit,
@@ -21,7 +21,7 @@ const callRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
 
-    const total = await prisma.call.count({
+    const total = await prisma.conversation.count({
       where: { organizationId },
     });
 
@@ -38,7 +38,7 @@ const callRoutes: FastifyPluginAsync = async (fastify) => {
     const organizationId = request.organizationId!;
     const id = (request.params as { id: string }).id;
 
-    const call = await prisma.call.findFirst({
+    const call = await prisma.conversation.findFirst({
       where: {
         id,
         organizationId,

@@ -1,5 +1,6 @@
 import { prisma } from "../config/database.js";
 import type { ToolContext } from "./index.js";
+import { notifyNewLead } from "../services/notifications.js";
 
 export async function createLead(args: any, context: ToolContext) {
   const { organizationId, callSid, callerNumber } = context;
@@ -60,7 +61,7 @@ export async function createLead(args: any, context: ToolContext) {
   });
 
   // Trigger notification for new lead (non-blocking)
-  notifyNewLead(updatedConversation.id, organizationId).catch((error) => {
+  notifyNewLead(updatedConversation.id, organizationId).catch((error: any) => {
     console.error(`Failed to send lead notification for conversation ${updatedConversation.id}:`, error);
   });
 

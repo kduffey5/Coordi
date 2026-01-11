@@ -74,36 +74,31 @@ const profileRoutes: FastifyPluginAsync = async (fastify) => {
       const organizationId = request.organizationId!;
       const body = BusinessProfileUpdateSchema.parse(request.body);
 
-      // For create, only include defined values (Prisma doesn't accept undefined)
-      const createData: Partial<typeof body> = {};
+      // Build update object, filtering out undefined values
+      const updateData: any = {};
       for (const [key, value] of Object.entries(body)) {
         if (value !== undefined) {
-          createData[key as keyof typeof body] = value;
+          updateData[key] = value;
         }
       }
 
-      const profile = await prisma.businessProfile.upsert({
+      // Check if profile exists
+      const existing = await prisma.businessProfile.findUnique({
         where: { organizationId },
-        update: body,
-        create: { 
-          organizationId,
-          companyName: createData.companyName ?? (body.companyName ?? ""),
-          description: createData.description ?? null,
-          serviceAreas: createData.serviceAreas ?? null,
-          servicesOffered: createData.servicesOffered ?? null,
-          pricingInfo: createData.pricingInfo ?? null,
-          policies: createData.policies ?? null,
-          faq: createData.faq ?? null,
-          companyInfo: createData.companyInfo ?? null,
-          serviceAreaConfig: createData.serviceAreaConfig ?? null,
-          servicesConfig: createData.servicesConfig ?? null,
-          pricingPhilosophy: createData.pricingPhilosophy ?? null,
-          policiesConfig: createData.policiesConfig ?? null,
-          localKnowledge: createData.localKnowledge ?? null,
-          voiceBehavior: createData.voiceBehavior ?? null,
-          lawnExpertMode: createData.lawnExpertMode ?? false,
-        },
       });
+
+      const profile = existing
+        ? await prisma.businessProfile.update({
+            where: { organizationId },
+            data: updateData,
+          })
+        : await prisma.businessProfile.create({
+            data: {
+              organizationId,
+              companyName: body.companyName ?? "My Business",
+              ...updateData,
+            },
+          });
 
       return profile;
     } catch (error) {
