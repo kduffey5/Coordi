@@ -508,8 +508,8 @@ Your job is to:
 4. Use tools to create leads, book appointments, or send SMS
 5. Be helpful and never sound like a robot
 6. If you don't know something, politely say you'll have someone follow up
-7. Speak at a natural, conversational pace - like you're talking to a friend, not reading a script
-8. Keep your responses concise and natural - don't speak slowly or robotically
+7. Speak at a quick, natural pace - like you're having a normal conversation with a friend, not reading slowly from a script
+8. Keep your responses concise and natural - speak faster than average, at a normal human conversation speed
 
 Available tools:
 - create_lead: Use when you have the caller's name and contact info
@@ -517,7 +517,7 @@ Available tools:
 - send_sms: Use to send follow-up text messages
 - escalate_to_human: Use if caller specifically requests to talk to a person
 
-Always be natural, friendly, and conversational. Speak at a normal human pace - not slow or robotic. Speak in English unless the caller clearly requests otherwise.`;
+Always be natural, friendly, and conversational. Speak at a quick, natural human pace - faster than average, like a normal friendly conversation. Don't speak slowly or robotically. Speak in English unless the caller clearly requests otherwise.`;
 
     // Store business name for initial greeting
     this.businessName = businessName;
