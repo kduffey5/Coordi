@@ -338,16 +338,22 @@ export class OpenAIBridge {
       
       // Calculate initial audio stats for diagnostics
       const initialStats = this.calculateAudioStats(pcm16Buffer24k, "24kHz-input");
+      if (this._audioChunkCount < 5) {
+        console.log(`📊 Audio Chunk #${this._audioChunkCount + 1} - Initial (24kHz): RMS=${initialStats.rms.toFixed(1)}, Peak=${initialStats.peak}, DC=${initialStats.dcOffset.toFixed(1)}, Range=${initialStats.dynamicRange.toFixed(2)}dB`);
+      }
       
-      // Resample from 24kHz to 8kHz (simple weighted averaging)
+      // Resample from 24kHz to 8kHz (improved weighted averaging)
       let pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
       const afterResampleStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-after-resample");
+      if (this._audioChunkCount < 5) {
+        console.log(`📊 After Resample (8kHz): RMS=${afterResampleStats.rms.toFixed(1)}, Peak=${afterResampleStats.peak}, DC=${afterResampleStats.dcOffset.toFixed(1)}, Range=${afterResampleStats.dynamicRange.toFixed(2)}dB`);
+      }
       
       // Gentle high-pass filter to remove low-frequency hum/noise (below ~100Hz)
       // Optimized for phone call clarity - removes hum while preserving speech
       // Uses first-order IIR high-pass filter with ~100Hz cutoff at 8kHz
-      // Slightly higher cutoff than before for better clarity
-      const alpha = 0.93; // Filter coefficient for ~100Hz cutoff (was 0.95 for 80Hz)
+      // Best practice: High-pass filter to remove phone line artifacts while preserving voice (80-3400Hz is optimal for speech)
+      const alpha = 0.93; // Filter coefficient for ~100Hz cutoff
       let prevInput = 0;
       let prevOutput = 0;
       const filtered = Buffer.from(pcm16Buffer8k);
@@ -359,6 +365,10 @@ export class OpenAIBridge {
         filtered.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(filteredSample))), i);
       }
       pcm16Buffer8k = filtered;
+      const afterHighPassStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-after-highpass");
+      if (this._audioChunkCount < 5) {
+        console.log(`📊 After High-Pass: RMS=${afterHighPassStats.rms.toFixed(1)}, Peak=${afterHighPassStats.peak}, DC=${afterHighPassStats.dcOffset.toFixed(1)}`);
+      }
       
       // Remove DC offset for cleaner audio (only if significant)
       // This helps prevent low-frequency artifacts and improves clarity
@@ -381,45 +391,81 @@ export class OpenAIBridge {
         }
       }
       
-      // Simple volume optimization: prevent clipping only
-      // Keep it minimal - let the audio speak for itself
+      // Best practice: Smart gain staging - prevent clipping while maximizing clarity
+      // Phone calls benefit from optimal volume: aim for -12dB to -6dB peak (about 50-75% of max)
       let maxSample = 0;
+      let rmsSum = 0;
+      const sampleCount = pcm16Buffer8k.length / 2;
+      
       for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
-        const absSample = Math.abs(pcm16Buffer8k.readInt16LE(i));
+        const sample = pcm16Buffer8k.readInt16LE(i);
+        const absSample = Math.abs(sample);
         if (absSample > maxSample) maxSample = absSample;
+        rmsSum += sample * sample;
       }
       
-      // Only reduce gain if clipping would occur (above 90% of max)
-      const maxLevel = 29491; // ~90% of 32767 - safe headroom
-      if (maxSample > maxLevel) {
-        const gain = maxLevel / maxSample;
+      const rms = Math.sqrt(rmsSum / sampleCount);
+      const peakDb = 20 * Math.log10(maxSample / 32767);
+      const rmsDb = 20 * Math.log10(rms / 32767);
+      
+      // Target: -12dB peak (75% of max) for optimal phone call clarity
+      // This provides good volume without clipping risk
+      const targetPeakDb = -12;
+      const targetPeak = Math.pow(10, targetPeakDb / 20) * 32767; // ~24575
+      const maxAllowedPeak = 29491; // ~90% of 32767 - absolute max
+      
+      let gainApplied = 1.0;
+      let needsGain = false;
+      
+      if (maxSample > maxAllowedPeak) {
+        // Clipping prevention: reduce gain if above 90%
+        gainApplied = maxAllowedPeak / maxSample;
+        needsGain = true;
+      } else if (maxSample < targetPeak * 0.5 && maxSample > 100) {
+        // Smart gain boost: increase quiet audio for better clarity (only if not too quiet)
+        // But be conservative - don't amplify noise
+        gainApplied = Math.min(2.0, targetPeak / maxSample); // Max 2x boost
+        needsGain = true;
+      }
+      
+      if (needsGain && gainApplied !== 1.0) {
         for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
-          const sample = Math.round(pcm16Buffer8k.readInt16LE(i) * gain);
+          const sample = Math.round(pcm16Buffer8k.readInt16LE(i) * gainApplied);
           pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), i);
         }
+        if (this._audioChunkCount < 5) {
+          console.log(`🔊 Gain applied: ${(gainApplied * 100).toFixed(0)}% (Peak: ${peakDb.toFixed(1)}dB → ${(20 * Math.log10((maxSample * gainApplied) / 32767)).toFixed(1)}dB, RMS: ${rmsDb.toFixed(1)}dB)`);
+        }
       }
       
-      // Apply very subtle smoothing to reduce quantization artifacts
-      // This helps reduce any harshness from MuLaw encoding without affecting clarity
-      if (pcm16Buffer8k.length >= 6) {
-        const smoothedBuffer = Buffer.from(pcm16Buffer8k);
-        // Simple 3-sample moving average (very light smoothing)
-        for (let i = 2; i < pcm16Buffer8k.length - 2; i += 2) {
-          const prev = pcm16Buffer8k.readInt16LE(i - 2);
-          const curr = pcm16Buffer8k.readInt16LE(i);
-          const next = pcm16Buffer8k.readInt16LE(i + 2);
-          // Weighted average: 0.25, 0.5, 0.25 (very subtle)
-          const smoothedValue = Math.round(prev * 0.25 + curr * 0.5 + next * 0.25);
-          smoothedBuffer.writeInt16LE(Math.max(-32768, Math.min(32767, smoothedValue)), i);
-        }
-        pcm16Buffer8k = smoothedBuffer;
-      }
+      // Best practice: Skip aggressive smoothing - MuLaw encoding handles quantization naturally
+      // Phone codecs are designed to handle raw PCM well - extra smoothing can reduce clarity
+      // Only apply minimal smoothing if needed (disabled for now)
+      // if (pcm16Buffer8k.length >= 6) {
+      //   // Very subtle smoothing only if absolutely necessary
+      // }
       
       // Calculate final PCM16 stats before MuLaw encoding
       const finalPcmStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-final");
+      if (this._audioChunkCount < 5) {
+        console.log(`📊 Final PCM16 (before MuLaw): RMS=${finalPcmStats.rms.toFixed(1)}, Peak=${finalPcmStats.peak}, DC=${finalPcmStats.dcOffset.toFixed(1)}, Range=${finalPcmStats.dynamicRange.toFixed(2)}dB`);
+      }
       
       // Convert PCM16 to MuLaw (clean, accurate encoding)
+      // Best practice: Use standard ITU-T G.711 μ-law encoding without dithering for phone calls
       const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer8k);
+      
+      // Log MuLaw encoding stats (first few chunks only)
+      if (this._audioChunkCount < 5) {
+        let mulawNonZero = 0;
+        let mulawMax = 0;
+        for (let i = 0; i < mulawBuffer.length; i++) {
+          const byte = mulawBuffer[i];
+          if (byte !== 0xFF && byte !== 0x7F) mulawNonZero++; // 0xFF/0x7F = silence in MuLaw
+          if (byte > mulawMax) mulawMax = byte;
+        }
+        console.log(`📊 MuLaw output: ${mulawBuffer.length} bytes, non-silence=${mulawNonZero}/${mulawBuffer.length}, max=${mulawMax.toString(16)}h`);
+      }
       
       // Add to buffer queue for proper chunking
       this._audioBuffer = Buffer.concat([this._audioBuffer, mulawBuffer]);
@@ -429,17 +475,15 @@ export class OpenAIBridge {
         this.startAudioStreaming();
       }
       
-      // Log diagnostic information periodically (every 10th chunk)
+      // Track chunk count for diagnostics
       if (!this._audioChunkCount) this._audioChunkCount = 0;
       this._audioChunkCount++;
-      if (this._audioChunkCount % 10 === 1 || this._audioChunkCount <= 3) {
-        console.log(`📊 Audio Chunk #${this._audioChunkCount} Diagnostics:`, {
-          input_24k: { rms: initialStats.rms.toFixed(0), peak: initialStats.peak, dcOffset: initialStats.dcOffset },
-          after_resample: { rms: afterResampleStats.rms.toFixed(0), peak: afterResampleStats.peak, dcOffset: afterResampleStats.dcOffset },
-          final_pcm: { rms: finalPcmStats.rms.toFixed(0), peak: finalPcmStats.peak, dcOffset: finalPcmStats.dcOffset },
-          mulaw_size: mulawBuffer.length,
-          buffer_size: this._audioBuffer.length
-        });
+      
+      // Log summary every 50th chunk for monitoring
+      if (this._audioChunkCount % 50 === 0) {
+        const peakDb = 20 * Math.log10(finalPcmStats.peak / 32767);
+        const rmsDb = 20 * Math.log10(finalPcmStats.rms / 32767);
+        console.log(`📊 Audio Summary (Chunk #${this._audioChunkCount}): Peak=${peakDb.toFixed(1)}dB, RMS=${rmsDb.toFixed(1)}dB, Buffer=${this._audioBuffer.length} bytes`);
       }
     } catch (error) {
       console.error("Error processing audio for Twilio:", error);
@@ -1166,15 +1210,33 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
         maxAmplitude = Math.max(maxAmplitude, Math.abs(sample));
       }
       
-      // Log audio statistics for first few chunks to verify conversion
+      // Enhanced input audio diagnostics - track audio quality metrics
       if (!this._inputAudioChunkCount) this._inputAudioChunkCount = 0;
       this._inputAudioChunkCount++;
+      
+      // Calculate audio statistics for input
+      let sumSquared8k = 0;
+      let peak8k = 0;
+      for (let i = 0; i < sampleCount8k; i++) {
+        const sample = pcm16Audio8k.readInt16LE(i * 2);
+        sumSquared8k += sample * sample;
+        peak8k = Math.max(peak8k, Math.abs(sample));
+      }
+      const rms8k = Math.sqrt(sumSquared8k / sampleCount8k);
+      const peakDb8k = 20 * Math.log10(peak8k / 32767);
+      const rmsDb8k = 20 * Math.log10(rms8k / 32767);
+      
       if (this._inputAudioChunkCount <= 5) {
         console.log(`📥 Input audio chunk #${this._inputAudioChunkCount}: MuLaw ${audioData.length} bytes → PCM16 8kHz ${pcm16Audio8k.length} bytes → PCM16 24kHz ${pcm16Audio24k.length} bytes`);
-        console.log(`   Non-zero samples: ${nonZeroSamples}/${sampleCount24k}, max amplitude: ${maxAmplitude}`);
-        // Log first few MuLaw bytes to see if they're all the same
+        console.log(`   📊 Input Audio Quality: Peak=${peakDb8k.toFixed(1)}dB, RMS=${rmsDb8k.toFixed(1)}dB, Max Amplitude=${peak8k}, Non-zero=${nonZeroSamples}/${sampleCount24k}`);
+        // Log first few MuLaw bytes to verify format
         const firstBytes = Array.from(audioData.slice(0, Math.min(10, audioData.length))).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(' ');
-        console.log(`   First MuLaw bytes: ${firstBytes}`);
+        console.log(`   MuLaw bytes (first 10): ${firstBytes}`);
+      }
+      
+      // Warn if input audio is very quiet (below -40dB) - might indicate an issue
+      if (this._inputAudioChunkCount === 10 && peakDb8k < -40) {
+        console.warn(`⚠️  Input audio is very quiet (Peak=${peakDb8k.toFixed(1)}dB). Check Twilio audio stream quality.`);
       }
       
       // Convert PCM16 buffer (24kHz) to base64
