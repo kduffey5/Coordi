@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, type Conversation } from "@/lib/api";
 
 type StatusFilter = "all" | "lead" | "missed" | "booked" | "escalated" | "new" | "followed_up";
 
-export default function ConversationsPage() {
+function ConversationsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
@@ -286,6 +286,18 @@ export default function ConversationsPage() {
         </div>
       </main>
     </div>
+  );
+}
+
+export default function ConversationsPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <p>Loading...</p>
+      </div>
+    }>
+      <ConversationsContent />
+    </Suspense>
   );
 }
 
