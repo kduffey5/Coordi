@@ -336,32 +336,27 @@ export class OpenAIBridge {
       // Decode base64 PCM16 audio (24kHz)
       const pcm16Buffer24k = Buffer.from(audioBase64, "base64");
       
-      // Resample from 24kHz to 8kHz
-      let pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
+      // Resample from 24kHz to 8kHz (simple weighted averaging)
+      const pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
       
-      // Apply soft limiter to prevent clipping (reduce gain to 80% max)
-      // This prevents distortion and static from over-amplified audio
-      const maxAmplitude = 26214; // ~80% of 32767 to prevent clipping
-      let peak = 0;
+      // Simple soft limiter to prevent clipping (only if needed)
+      // Check peak amplitude and reduce if too high
+      let maxSample = 0;
       for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
-        const sample = Math.abs(pcm16Buffer8k.readInt16LE(i));
-        peak = Math.max(peak, sample);
+        const absSample = Math.abs(pcm16Buffer8k.readInt16LE(i));
+        if (absSample > maxSample) maxSample = absSample;
       }
-      if (peak > maxAmplitude) {
-        const gain = maxAmplitude / peak;
+      
+      // Only apply gain reduction if clipping would occur (>90% of max)
+      if (maxSample > 29491) { // ~90% of 32767
+        const gain = 29491 / maxSample;
         for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
           const sample = Math.round(pcm16Buffer8k.readInt16LE(i) * gain);
           pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), i);
         }
       }
       
-      // Apply audio enhancement for crystal clear quality
-      pcm16Buffer8k = this.enhanceAudioQuality(pcm16Buffer8k);
-      
-      // Remove DC offset to reduce static and improve audio quality
-      pcm16Buffer8k = this.removeDCOffset(pcm16Buffer8k);
-      
-      // Convert PCM16 to MuLaw
+      // Convert PCM16 to MuLaw (no extra processing - keep it simple)
       const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer8k);
       
       // Add to buffer queue for proper chunking
@@ -1000,30 +995,14 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
   private pcm16ToMulaw(pcm16Buffer: Buffer): Buffer {
     const mulawBuffer = Buffer.allocUnsafe(pcm16Buffer.length / 2);
     
-    // Standard G.711 μ-law encoding (optimized for maximum accuracy)
-    // Reference: ITU-T G.711 specification
+    // Standard G.711 μ-law encoding (ITU-T G.711 specification)
+    // Keep it simple - no dithering or extra processing
     const BIAS = 33; // Standard G.711 bias
     const MAX = 32635; // Maximum value for μ-law encoding
     
-    // Triangular dithering to reduce quantization noise
-    // This helps mask quantization artifacts for cleaner audio
-    let ditherState = 0;
-    
     for (let i = 0; i < mulawBuffer.length; i++) {
-      // Read 16-bit signed integer (little-endian, as OpenAI sends)
-      let sample = pcm16Buffer.readInt16LE(i * 2);
-      
-      // Apply triangular dithering (high-pass noise) to reduce quantization artifacts
-      // Generate triangular dither: range [-1, 1] with uniform distribution
-      // Simple LCG-based triangular dither
-      ditherState = (ditherState * 1664525 + 1013904223) >>> 0;
-      const rand1 = ((ditherState & 0xFFFF) / 65536.0) - 0.5;
-      ditherState = (ditherState * 1664525 + 1013904223) >>> 0;
-      const rand2 = ((ditherState & 0xFFFF) / 65536.0) - 0.5;
-      const dither = (rand1 + rand2) * 2; // Triangular distribution [-2, 2]
-      
-      // Apply dither before quantization (scaled to ~1 LSB for 16-bit)
-      sample = Math.round(sample + dither * 0.5);
+      // Read 16-bit signed integer (little-endian)
+      const sample = pcm16Buffer.readInt16LE(i * 2);
       
       // Get sign bit (bit 15)
       const sign = (sample >>> 15) & 0x01;
@@ -1031,27 +1010,23 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       // Get magnitude (absolute value)
       let magnitude = Math.abs(sample);
       
-      // Clamp to valid range to prevent overflow
+      // Clamp to valid range
       magnitude = Math.min(magnitude, MAX);
       
       // Add bias for proper encoding
       magnitude += BIAS;
       
-      // Find exponent (segment) using efficient bit-based calculation
-      // Use bit counting for precise segment detection
+      // Find exponent (segment) - use simple threshold checking
       let exponent = 7;
-      let temp = magnitude;
-      if (temp < 0x20) exponent = 0;
-      else if (temp < 0x40) exponent = 1;
-      else if (temp < 0x80) exponent = 2;
-      else if (temp < 0x100) exponent = 3;
-      else if (temp < 0x200) exponent = 4;
-      else if (temp < 0x400) exponent = 5;
-      else if (temp < 0x800) exponent = 6;
-      // else exponent = 7 (already set)
+      if (magnitude < 0x20) exponent = 0;
+      else if (magnitude < 0x40) exponent = 1;
+      else if (magnitude < 0x80) exponent = 2;
+      else if (magnitude < 0x100) exponent = 3;
+      else if (magnitude < 0x200) exponent = 4;
+      else if (magnitude < 0x400) exponent = 5;
+      else if (magnitude < 0x800) exponent = 6;
       
-      // Calculate mantissa (4-bit quantization) from original magnitude
-      // Shift right by (exponent + 3) and mask to 4 bits
+      // Calculate mantissa (4-bit quantization)
       const mantissa = (magnitude >> (exponent + 3)) & 0x0F;
       
       // Combine: sign (bit 7) | exponent (bits 6-4) | mantissa (bits 3-0)
@@ -1076,14 +1051,10 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       // Twilio sends audio/x-mulaw at 8kHz
       const pcm16Audio8k = this.mulawToPcm16(audioData);
       
-      // Apply noise reduction to input audio to reduce static
-      // Light noise reduction that won't interfere with VAD
-      const cleanedAudio8k = this.reduceInputNoise(pcm16Audio8k);
-      
       // OpenAI Realtime API expects PCM16 at 24kHz
       // Upsample from 8kHz to 24kHz (1:3 ratio)
-      // Note: Don't remove DC offset on input audio as it can interfere with VAD
-      const pcm16Audio24k = this.resample8kTo24k(cleanedAudio8k);
+      // Keep it simple - no extra processing on input audio
+      const pcm16Audio24k = this.resample8kTo24k(pcm16Audio8k);
       
       // Debug: Check if audio is non-zero (not silence)
       const sampleCount8k = pcm16Audio8k.length / 2; // Each sample is 2 bytes
