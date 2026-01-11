@@ -24,7 +24,7 @@ const leadRoutes: FastifyPluginAsync = async (fastify) => {
       take: limit,
       skip: offset,
       include: {
-        call: true,
+        conversation: true,
       },
     });
 
@@ -49,7 +49,7 @@ const leadRoutes: FastifyPluginAsync = async (fastify) => {
         organizationId,
       },
       include: {
-        call: true,
+        conversation: true,
       },
     });
 

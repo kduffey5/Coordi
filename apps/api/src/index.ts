@@ -34,7 +34,7 @@ fastify.get("/", async (request, reply) => {
       health: "/health",
       auth: "/api/auth",
       profile: "/api/profile",
-      calls: "/api/calls",
+      conversations: "/api/conversations",
       leads: "/api/leads",
       metrics: "/api/metrics",
       integrations: "/api/integrations",
@@ -52,7 +52,7 @@ fastify.get("/health", async (request, reply) => {
 // Register routes
 import authRoutes from "./routes/auth.js";
 import profileRoutes from "./routes/profile.js";
-import callRoutes from "./routes/calls.js";
+import conversationRoutes from "./routes/conversations.js";
 import leadRoutes from "./routes/leads.js";
 import metricsRoutes from "./routes/metrics.js";
 import integrationRoutes from "./routes/integrations.js";
@@ -60,7 +60,7 @@ import twilioRoutes from "./routes/twilio.js";
 
 fastify.register(authRoutes, { prefix: "/api/auth" });
 fastify.register(profileRoutes, { prefix: "/api/profile" });
-fastify.register(callRoutes, { prefix: "/api/calls" });
+fastify.register(conversationRoutes, { prefix: "/api/conversations" });
 fastify.register(leadRoutes, { prefix: "/api/leads" });
 fastify.register(metricsRoutes, { prefix: "/api/metrics" });
 fastify.register(integrationRoutes, { prefix: "/api/integrations" });

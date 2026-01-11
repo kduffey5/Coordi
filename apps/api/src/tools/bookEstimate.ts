@@ -16,29 +16,31 @@ export async function bookEstimate(args: any, context: ToolContext) {
   // Parse the requested date
   const scheduledDate = requestedDate ? new Date(requestedDate) : null;
 
-  // Find or create call record
-  let call = await prisma.call.findUnique({
+  // Find or create conversation record
+  let conversation = await prisma.conversation.findUnique({
     where: { twilioCallSid: callSid },
   });
 
-  if (!call) {
+  if (!conversation) {
     const org = await prisma.organization.findUnique({
       where: { id: organizationId },
     });
     
-    call = await prisma.call.create({
+    conversation = await prisma.conversation.create({
       data: {
         organizationId,
         fromNumber: callerNumber,
         toNumber: org?.twilioNumber || "",
         twilioCallSid: callSid,
+        status: "new",
+        isLead: false,
       },
     });
   }
 
   // Create or update lead with appointment
   const lead = await prisma.lead.upsert({
-    where: { callId: call.id },
+    where: { conversationId: conversation.id },
     update: {
       name: name || undefined,
       phone: phone || callerNumber,
@@ -51,7 +53,7 @@ export async function bookEstimate(args: any, context: ToolContext) {
     },
     create: {
       organizationId,
-      callId: call.id,
+      conversationId: conversation.id,
       name: name || null,
       phone: phone || callerNumber,
       email: email || null,
@@ -63,12 +65,19 @@ export async function bookEstimate(args: any, context: ToolContext) {
     },
   });
 
-  // Update call record
-  await prisma.call.update({
-    where: { id: call.id },
+  // Update conversation record - mark as lead and booked
+  const updatedConversation = await prisma.conversation.update({
+    where: { id: conversation.id },
     data: {
-      outcome: "lead_captured",
+      isLead: true,
+      status: "booked",
     },
+  });
+
+  // Trigger notification for new lead (non-blocking)
+  // Even though status is "booked", it's still a new lead that needs attention
+  notifyNewLead(updatedConversation.id, organizationId).catch((error) => {
+    console.error(`Failed to send lead notification for conversation ${updatedConversation.id}:`, error);
   });
 
   const formattedDate = scheduledDate

@@ -348,14 +348,14 @@ function LeadDetailModal({
             />
           </div>
 
-          {lead.call && (
+          {lead.conversation && (
             <div>
-              <label className="block text-sm font-medium text-gray-700">Related Call</label>
+              <label className="block text-sm font-medium text-gray-700">Related Conversation</label>
               <a
-                href={`/calls`}
+                href={`/conversations`}
                 className="mt-1 text-sm text-indigo-600 hover:text-indigo-500"
               >
-                View Call from {formatDate(lead.call.startTime)}
+                View Conversation from {formatDate(lead.conversation.startTime)}
               </a>
             </div>
           )}

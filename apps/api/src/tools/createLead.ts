@@ -12,23 +12,25 @@ export async function createLead(args: any, context: ToolContext) {
     notes,
   } = args;
 
-  // Find or create call record
-  let call = await prisma.call.findUnique({
+  // Find or create conversation record
+  let conversation = await prisma.conversation.findUnique({
     where: { twilioCallSid: callSid },
   });
 
-  if (!call) {
-    // Call record should exist, but create if missing
+  if (!conversation) {
+    // Conversation record should exist, but create if missing
     const org = await prisma.organization.findUnique({
       where: { id: organizationId },
     });
     
-    call = await prisma.call.create({
+    conversation = await prisma.conversation.create({
       data: {
         organizationId,
         fromNumber: callerNumber,
         toNumber: org?.twilioNumber || "",
         twilioCallSid: callSid,
+        status: "new",
+        isLead: false,
       },
     });
   }
@@ -37,7 +39,7 @@ export async function createLead(args: any, context: ToolContext) {
   const lead = await prisma.lead.create({
     data: {
       organizationId,
-      callId: call.id,
+      conversationId: conversation.id,
       name: name || null,
       phone: phone || callerNumber,
       email: email || null,
@@ -48,12 +50,18 @@ export async function createLead(args: any, context: ToolContext) {
     },
   });
 
-  // Update call record
-  await prisma.call.update({
-    where: { id: call.id },
+  // Update conversation record - mark as lead
+  const updatedConversation = await prisma.conversation.update({
+    where: { id: conversation.id },
     data: {
-      outcome: "lead_captured",
+      isLead: true,
+      status: "new",
     },
+  });
+
+  // Trigger notification for new lead (non-blocking)
+  notifyNewLead(updatedConversation.id, organizationId).catch((error) => {
+    console.error(`Failed to send lead notification for conversation ${updatedConversation.id}:`, error);
   });
 
   return {

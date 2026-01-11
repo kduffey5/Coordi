@@ -13,20 +13,20 @@ const metricsRoutes: FastifyPluginAsync = async (fastify) => {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    // Total calls
-    const totalCalls = await prisma.call.count({
+    // Total conversations
+    const totalConversations = await prisma.conversation.count({
       where: {
         organizationId,
         startTime: { gte: startDate },
       },
     });
 
-    // Calls with leads
-    const callsWithLeads = await prisma.call.count({
+    // Conversations with leads
+    const conversationsWithLeads = await prisma.conversation.count({
       where: {
         organizationId,
         startTime: { gte: startDate },
-        lead: { isNot: null },
+        isLead: true,
       },
     });
 
@@ -47,19 +47,25 @@ const metricsRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
 
-    // Missed calls (calls without leads)
-    const missedCalls = totalCalls - callsWithLeads;
+    // Missed conversations (conversations without leads)
+    const missedConversations = await prisma.conversation.count({
+      where: {
+        organizationId,
+        startTime: { gte: startDate },
+        status: "missed",
+      },
+    });
 
     // Conversion rate
-    const conversionRate = totalCalls > 0 ? (callsWithLeads / totalCalls) * 100 : 0;
+    const conversionRate = totalConversations > 0 ? (conversationsWithLeads / totalConversations) * 100 : 0;
     const bookingRate = totalLeads > 0 ? (leadsWithAppointments / totalLeads) * 100 : 0;
 
     return {
       period: { days, startDate },
       calls: {
-        total: totalCalls,
-        withLeads: callsWithLeads,
-        missed: missedCalls,
+        total: totalConversations,
+        withLeads: conversationsWithLeads,
+        missed: missedConversations,
         conversionRate: Math.round(conversionRate * 100) / 100,
       },
       leads: {

@@ -7,7 +7,7 @@ export interface ApiResponse<T> {
   error?: string;
 }
 
-export interface Call {
+export interface Conversation {
   id: string;
   organizationId: string;
   fromNumber: string;
@@ -16,19 +16,25 @@ export interface Call {
   startTime: string;
   endTime?: string | null;
   durationSeconds?: number | null;
-  outcome?: string | null;
-  recordingUrl?: string | null;
-  transcript?: string | null;
   summary?: string | null;
+  transcript?: string | null;
+  recordingUrl?: string | null;
+  isLead: boolean;
+  status: string; // 'new' | 'booked' | 'followed_up' | 'escalated' | 'missed'
+  tags: string[];
+  metadata?: any;
   lead?: Lead | null;
   createdAt: string;
   updatedAt: string;
 }
 
+// Keep Call interface for backward compatibility during migration
+export interface Call extends Conversation {}
+
 export interface Lead {
   id: string;
   organizationId: string;
-  callId?: string | null;
+  conversationId?: string | null;
   name?: string | null;
   phone?: string | null;
   email?: string | null;
@@ -39,14 +45,19 @@ export interface Lead {
   notes?: string | null;
   createdAt: string;
   updatedAt: string;
-  call?: Call | null;
+  conversation?: Conversation | null;
 }
 
-export interface CallsResponse {
-  calls: Call[];
+export interface ConversationsResponse {
+  conversations: Conversation[];
   total: number;
   limit: number;
   offset: number;
+}
+
+// Keep for backward compatibility
+export interface CallsResponse extends ConversationsResponse {
+  calls: Conversation[];
 }
 
 export interface LeadsResponse {
@@ -184,13 +195,52 @@ class ApiClient {
     return this.request(`/api/metrics${params}`);
   }
 
-  // Calls
+  // Conversations (replaces Calls)
+  async getConversations(limit = 50, offset = 0, status?: string, isLead?: boolean) {
+    const params = new URLSearchParams({
+      limit: limit.toString(),
+      offset: offset.toString(),
+    });
+    if (status) params.append("status", status);
+    if (isLead !== undefined) params.append("isLead", isLead.toString());
+    return this.request<ConversationsResponse>(`/api/conversations?${params}`);
+  }
+
+  async getConversation(id: string) {
+    return this.request<Conversation>(`/api/conversations/${id}`);
+  }
+
+  async updateConversation(id: string, data: {
+    isLead?: boolean;
+    status?: string;
+    tags?: string[];
+    summary?: string;
+    transcript?: string;
+  }) {
+    return this.request<Conversation>(`/api/conversations/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Legacy methods for backward compatibility
   async getCalls(limit = 50, offset = 0) {
-    return this.request<CallsResponse>(`/api/calls?limit=${limit}&offset=${offset}`);
+    const result = await this.getConversations(limit, offset);
+    if (result.data) {
+      return {
+        data: {
+          calls: result.data.conversations,
+          total: result.data.total,
+          limit: result.data.limit,
+          offset: result.data.offset,
+        },
+      };
+    }
+    return result;
   }
 
   async getCall(id: string) {
-    return this.request<Call>(`/api/calls/${id}`);
+    return this.getConversation(id);
   }
 
   // Leads

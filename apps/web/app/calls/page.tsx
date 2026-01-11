@@ -142,7 +142,7 @@ export default function CallsPage() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {call.lead ? (
                           <a
-                            href={`/leads?id=${call.lead.id}`}
+                            href={`/conversations?filter=lead`}
                             className="text-indigo-600 hover:text-indigo-500"
                           >
                             View Lead
@@ -266,7 +266,7 @@ function CallDetailModal({ call, onClose }: { call: any; onClose: () => void }) 
             <div>
               <label className="block text-sm font-medium text-gray-700">Related Lead</label>
               <a
-                href={`/leads?id=${call.lead.id}`}
+                href={`/conversations?filter=lead`}
                 className="mt-1 text-sm text-indigo-600 hover:text-indigo-500"
               >
                 View Lead: {call.lead.name || call.lead.id.substring(0, 8)}

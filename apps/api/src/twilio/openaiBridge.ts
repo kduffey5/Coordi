@@ -478,9 +478,23 @@ export class OpenAIBridge {
 
   private buildSystemPrompt(profile: any): string {
     const org = profile.organization;
-    const business = org.businessProfile;
-    const businessName = business?.companyName || org.name;
-
+    const business = org.businessProfile || {};
+    
+    // Get business name from structured companyInfo or fallback to old fields
+    const companyInfo = business.companyInfo || {};
+    const businessName = companyInfo.businessName || business.companyName || org.name;
+    const greetingFormat = companyInfo.greetingFormat || `Thanks for calling ${businessName}`;
+    const serviceHours = companyInfo.serviceHours || "";
+    const afterHoursBehavior = companyInfo.afterHoursBehavior || "";
+    
+    // Voice behavior from business profile or use agent profile defaults
+    const voiceBehavior = business.voiceBehavior || {};
+    const tone = voiceBehavior.tone || this.scaleToWord(profile.tone, ["casual", "professional", "formal"]);
+    const empathy = voiceBehavior.empathy || this.scaleToWord(profile.empathyLevel, ["low", "medium", "high"]);
+    const preferredWords = voiceBehavior.preferredWords || {};
+    const referToTeamByName = voiceBehavior.referToTeamByName || false;
+    
+    // Build prompt sections
     let prompt = `You are Coordi, an AI receptionist for ${businessName}, a service business.
 
 CRITICAL LANGUAGE INSTRUCTIONS:
@@ -489,39 +503,194 @@ CRITICAL LANGUAGE INSTRUCTIONS:
 - If you detect the caller is speaking Spanish (or another language), you may respond in that language, but always start in English
 - Default to English unless explicitly requested otherwise
 
-Your speaking style:
-- Tone: ${this.scaleToWord(profile.tone, ["casual", "professional", "formal"])}
-- Pace: ${this.scaleToWord(profile.pace, ["slow and clear", "normal", "quick"])}
-- Energy: ${this.scaleToWord(profile.energy, ["calm", "moderate", "enthusiastic"])}
-- Empathy: ${this.scaleToWord(profile.empathyLevel, ["matter-of-fact", "understanding", "very empathetic"])}
+Your speaking style:`;
 
-Company Information:
-${business?.description ? `Description: ${business.description}\n` : ""}
-${business?.servicesOffered ? `Services: ${business.servicesOffered}\n` : ""}
-${business?.serviceAreas ? `Service Areas: ${business.serviceAreas}\n` : ""}
-${business?.pricingInfo ? `Pricing: ${business.pricingInfo}\n` : ""}
+    // Add voice behavior from business profile if available, otherwise use agent profile
+    const empathyMap: Record<string, string> = {
+      low: "matter-of-fact",
+      medium: "understanding",
+      high: "very empathetic"
+    };
+    const finalEmpathy = voiceBehavior.empathy ? (empathyMap[empathy] || empathy) : this.scaleToWord(profile.empathyLevel, ["matter-of-fact", "understanding", "very empathetic"]);
+    
+    prompt += `\n- Tone: ${tone}`;
+    prompt += `\n- Pace: ${this.scaleToWord(profile.pace, ["slow and clear", "normal", "quick"])}`;
+    prompt += `\n- Energy: ${this.scaleToWord(profile.energy, ["calm", "moderate", "enthusiastic"])}`;
+    prompt += `\n- Empathy: ${finalEmpathy}`;
+    
+    if (Object.keys(preferredWords).length > 0) {
+      prompt += `\n- Preferred words/phrases: Use these terms when speaking - ${Object.entries(preferredWords).map(([key, value]) => `"${key}" instead of "${value}"`).join(", ")}`;
+    }
+    
+    if (referToTeamByName) {
+      prompt += `\n- Refer to the team by name when appropriate`;
+    }
 
-Your job is to:
-1. Answer calls professionally and pleasantly IN ENGLISH
-2. Start every call with a greeting like: "Hi, this is ${businessName}, how can I help you?"
-3. Gather caller information (name, phone, address, service needs)
-4. Use tools to create leads, book appointments, or send SMS
-5. Be helpful and never sound like a robot
-6. If you don't know something, politely say you'll have someone follow up
-7. Speak at a quick, natural pace - like you're having a normal conversation with a friend, not reading slowly from a script
-8. Keep your responses concise and natural - speak faster than average, at a normal human conversation speed
+    // Company Information Section
+    prompt += `\n\nCOMPANY INFORMATION:`;
+    prompt += `\nBusiness Name: ${businessName}`;
+    if (companyInfo.phoneNumber) {
+      prompt += `\nPhone Number: ${companyInfo.phoneNumber}`;
+    }
+    if (serviceHours) {
+      prompt += `\nService Hours: ${serviceHours}`;
+    }
+    if (business.description) {
+      prompt += `\nDescription: ${business.description}`;
+    }
 
-Available tools:
-- create_lead: Use when you have the caller's name and contact info
-- book_estimate: Use when caller wants to schedule an appointment
-- send_sms: Use to send follow-up text messages
-- escalate_to_human: Use if caller specifically requests to talk to a person
+    // Service Area Section
+    const serviceAreaConfig = business.serviceAreaConfig || {};
+    if (serviceAreaConfig.zipCodes?.length > 0 || serviceAreaConfig.cities?.length > 0) {
+      prompt += `\n\nSERVICE AREA:`;
+      if (serviceAreaConfig.zipCodes?.length > 0) {
+        prompt += `\n- Zip Codes Served: ${serviceAreaConfig.zipCodes.join(", ")}`;
+      }
+      if (serviceAreaConfig.cities?.length > 0) {
+        prompt += `\n- Cities Served: ${serviceAreaConfig.cities.join(", ")}`;
+      }
+      if (serviceAreaConfig.outOfAreaResponse) {
+        const outOfAreaMap: Record<string, string> = {
+          collect_and_escalate: "Still collect their information and escalate to the team for review",
+          politely_decline: "Politely decline and end the call",
+          offer_referral: "Offer to refer them to another provider"
+        };
+        prompt += `\n- Out-of-Area Response: ${outOfAreaMap[serviceAreaConfig.outOfAreaResponse] || serviceAreaConfig.outOfAreaResponse}`;
+      }
+    } else if (business.serviceAreas) {
+      // Fallback to old field
+      prompt += `\n\nService Areas: ${business.serviceAreas}`;
+    }
 
-Always be natural, friendly, and conversational. Speak at a quick, natural human pace - faster than average, like a normal friendly conversation. Don't speak slowly or robotically. Speak in English unless the caller clearly requests otherwise.`;
+    // Services Section
+    const servicesConfig = business.servicesConfig || [];
+    if (servicesConfig.length > 0) {
+      prompt += `\n\nSERVICES OFFERED:`;
+      servicesConfig.forEach((service: any) => {
+        prompt += `\n\n- ${service.name || "Service"}`;
+        if (service.description) {
+          prompt += `: ${service.description}`;
+        }
+        if (service.quotingType) {
+          const quotingMap: Record<string, string> = {
+            starting_at: `Starting at $${service.startingPrice || "price on request"}`,
+            range_estimate: service.priceRange ? `Range: $${service.priceRange.min}-$${service.priceRange.max}` : "Price range available",
+            manual_quote_only: "Requires manual quote (no price given over phone)"
+          };
+          prompt += `\n  Pricing: ${quotingMap[service.quotingType] || service.quotingType}`;
+        }
+        if (service.questions?.length > 0) {
+          prompt += `\n  Key questions to ask: ${service.questions.map((q: any) => q.question).join(", ")}`;
+        }
+        if (service.addOns?.length > 0) {
+          prompt += `\n  Add-ons available: ${service.addOns.join(", ")}`;
+        }
+      });
+    } else if (business.servicesOffered) {
+      // Fallback to old field
+      prompt += `\n\nServices: ${business.servicesOffered}`;
+    }
+
+    // Pricing Philosophy
+    if (business.pricingPhilosophy) {
+      prompt += `\n\nPRICING PHILOSOPHY:`;
+      const pricingMap: Record<string, string> = {
+        soft_ranges: "Provide soft price ranges during the call when asked",
+        quote_with_photos: "Only provide quotes after receiving photos from the customer",
+        never_discuss_price: "Never discuss pricing over the phone - politely defer to scheduling an estimate"
+      };
+      prompt += `\n${pricingMap[business.pricingPhilosophy] || business.pricingPhilosophy}`;
+    } else if (business.pricingInfo) {
+      // Fallback to old field
+      prompt += `\n\nPricing: ${business.pricingInfo}`;
+    }
+
+    // Policies Section
+    const policiesConfig = business.policiesConfig || {};
+    if (Object.keys(policiesConfig).length > 0) {
+      prompt += `\n\nPOLICIES:`;
+      if (policiesConfig.cancellationPolicy) {
+        prompt += `\n- Cancellation Policy: ${policiesConfig.cancellationPolicy}`;
+      }
+      if (policiesConfig.reschedulePolicy) {
+        prompt += `\n- Reschedule Policy: ${policiesConfig.reschedulePolicy}`;
+      }
+      if (policiesConfig.rainPolicy) {
+        prompt += `\n- Rain/Weather Policy: ${policiesConfig.rainPolicy}`;
+      }
+      if (policiesConfig.paymentTypes?.length > 0) {
+        prompt += `\n- Payment Types Accepted: ${policiesConfig.paymentTypes.join(", ")}`;
+      }
+      if (policiesConfig.petGateAccess) {
+        prompt += `\n- Pet/Gate Access: ${policiesConfig.petGateAccess}`;
+      }
+      if (policiesConfig.satisfactionGuarantee) {
+        prompt += `\n- Satisfaction Guarantee: ${policiesConfig.satisfactionGuarantee}`;
+      }
+    } else if (business.policies) {
+      // Fallback to old field
+      prompt += `\n\nPolicies: ${business.policies}`;
+    }
+
+    // Local Knowledge Section
+    const localKnowledge = business.localKnowledge || [];
+    if (localKnowledge.length > 0) {
+      prompt += `\n\nLOCAL KNOWLEDGE & CONTEXT:`;
+      localKnowledge.forEach((entry: any) => {
+        if (entry.locationTag) {
+          prompt += `\n- ${entry.locationTag}: ${entry.text}`;
+        } else {
+          prompt += `\n- ${entry.text}`;
+        }
+      });
+    }
+
+    // After-Hours Behavior
+    if (afterHoursBehavior) {
+      prompt += `\n\nAFTER-HOURS BEHAVIOR:`;
+      const afterHoursMap: Record<string, string> = {
+        take_lead_info: "Take the caller's information and promise a follow-up during business hours",
+        send_booking_link: "Send them a booking link via SMS to schedule at their convenience",
+        escalate_emergency_only: "Only escalate emergency jobs (like irrigation leaks or fallen trees) - otherwise take info for follow-up"
+      };
+      prompt += `\n${afterHoursMap[afterHoursBehavior] || afterHoursBehavior}`;
+    }
+
+    // Lawn Care Expert Mode
+    if (business.lawnExpertMode) {
+      prompt += `\n\nLAWN CARE EXPERTISE:`;
+      prompt += `\nIn addition to acting as a receptionist, you are a friendly, knowledgeable lawn care expert.`;
+      prompt += `\nIf callers ask for advice (e.g., "What should I do about yellow spots?" or "How often should I mow?"),`;
+      prompt += `\nprovide conversational, helpful guidance just like an experienced technician would.`;
+      prompt += `\nYou can offer practical tips and suggestions based on common lawn care knowledge.`;
+    }
+
+    // Main Instructions
+    prompt += `\n\nYOUR JOB:`;
+    prompt += `\n1. Answer calls professionally and pleasantly IN ENGLISH`;
+    if (greetingFormat) {
+      prompt += `\n2. Start every call with a greeting like: "${greetingFormat}"`;
+    } else {
+      prompt += `\n2. Start every call with a greeting like: "Hi, this is ${businessName}, how can I help you?"`;
+    }
+    prompt += `\n3. Gather caller information (name, phone, address, service needs)`;
+    prompt += `\n4. Use tools to create leads, book appointments, or send SMS`;
+    prompt += `\n5. Be helpful and never sound like a robot`;
+    prompt += `\n6. If you don't know something, politely say you'll have someone follow up`;
+    prompt += `\n7. Speak at a quick, natural pace - like you're having a normal conversation with a friend, not reading slowly from a script`;
+    prompt += `\n8. Keep your responses concise and natural - speak faster than average, at a normal human conversation speed`;
+
+    prompt += `\n\nAVAILABLE TOOLS:`;
+    prompt += `\n- create_lead: Use when you have the caller's name and contact info`;
+    prompt += `\n- book_estimate: Use when caller wants to schedule an appointment`;
+    prompt += `\n- send_sms: Use to send follow-up text messages`;
+    prompt += `\n- escalate_to_human: Use if caller specifically requests to talk to a person`;
+
+    prompt += `\n\nAlways be natural, friendly, and conversational. Speak at a quick, natural human pace - faster than average, like a normal friendly conversation. Don't speak slowly or robotically. Speak in English unless the caller clearly requests otherwise.`;
 
     // Store business name for initial greeting
     this.businessName = businessName;
-    this.customWelcomePrompt = profile.welcomePrompt;
+    this.customWelcomePrompt = profile.welcomePrompt || greetingFormat;
 
     return prompt;
   }

@@ -19,7 +19,7 @@ model Organization {
   users           User[]
   agentProfile    AgentProfile?
   businessProfile BusinessProfile?
-  calls           Call[]
+  conversations   Conversation[]
   leads           Lead[]
   integrations    Integration?
 }
@@ -68,13 +68,22 @@ model BusinessProfile {
   pricingInfo    String?      // Text description
   policies       String?      // Text
   faq            String?      // JSON array of Q&A or text
+  // New structured fields
+  companyInfo    Json?        // Business name, greeting format, phone, service hours, after-hours behavior
+  serviceAreaConfig Json?     // List of zip codes/cities, out-of-area response
+  servicesConfig Json?        // Array of services with details (name, description, quoting type, questions, add-ons)
+  pricingPhilosophy String?   // "soft_ranges", "quote_with_photos", "never_discuss_price"
+  policiesConfig Json?        // Cancellation, rain, payment, pet/gate, satisfaction guarantee
+  localKnowledge Json?        // Array of knowledge entries with text and location tags
+  voiceBehavior  Json?        // Tone, empathy, preferred words, team name reference
+  lawnExpertMode Boolean      @default(false) // Enable lawn care expert mode
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
   @@index([organizationId])
 }
 
-model Call {
+model Conversation {
   id            String       @id @default(uuid())
   organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId String
@@ -84,24 +93,29 @@ model Call {
   startTime     DateTime     @default(now())
   endTime       DateTime?
   durationSeconds Int?
-  outcome       String?      // lead_captured, missed, transferred, etc.
-  recordingUrl  String?
-  transcript    String?
   summary       String?
+  transcript    String?
+  recordingUrl  String?
+  isLead        Boolean      @default(false)
+  status        String       @default("new") // new, booked, followed_up, escalated, missed
+  tags          String[]     @default([]) // e.g. ['sprinkler repair', 'overgrown']
+  metadata      Json?        // Additional flexible data
   lead          Lead?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
   @@index([organizationId])
   @@index([startTime])
+  @@index([isLead])
+  @@index([status])
 }
 
 model Lead {
   id              String       @id @default(uuid())
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   organizationId  String
-  call            Call?        @relation(fields: [callId], references: [id])
-  callId          String?
+  conversation    Conversation?        @relation(fields: [conversationId], references: [id])
+  conversationId  String?      @unique
   name            String?
   phone           String?
   email           String?
@@ -115,7 +129,7 @@ model Lead {
 
   @@index([organizationId])
   @@index([status])
-  @@index([callId])
+  @@index([conversationId])
 }
 
 model Integration {

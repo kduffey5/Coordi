@@ -33,11 +33,11 @@ export async function escalateToHuman(args: any, context: ToolContext) {
     // Initiate warm transfer by creating a conference
     // Note: This is a simplified version - full implementation would use Twilio Conference
     try {
-      // For now, we'll update the call record and let the owner know
-      await prisma.call.update({
+      // For now, we'll update the conversation record and let the owner know
+      await prisma.conversation.update({
         where: { twilioCallSid: callSid },
         data: {
-          outcome: "transferred",
+          status: "escalated",
         },
       });
 

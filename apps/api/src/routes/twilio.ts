@@ -62,25 +62,27 @@ const twilioRoutes: FastifyPluginAsync = async (fastify) => {
 
     fastify.log.info(`Call status update: ${callSid} -> ${callStatus}`);
 
-    // Update call record if exists
+    // Update conversation record if exists
     if (callSid) {
       try {
-        const call = await prisma.call.findUnique({
+        const conversation = await prisma.conversation.findUnique({
           where: { twilioCallSid: callSid },
         });
 
-        if (call) {
-          await prisma.call.update({
-            where: { id: call.id },
+        if (conversation) {
+          await prisma.conversation.update({
+            where: { id: conversation.id },
             data: {
-              // Map Twilio status to our outcome
-              outcome: callStatus === "completed" ? call.outcome || "completed" : call.outcome,
-              endTime: callStatus === "completed" ? new Date() : call.endTime,
+              // Map Twilio status to our status
+              status: callStatus === "completed" ? (conversation.status || "completed") : 
+                      callStatus === "no-answer" || callStatus === "busy" ? "missed" : 
+                      conversation.status,
+              endTime: callStatus === "completed" ? new Date() : conversation.endTime,
             },
           });
         }
       } catch (error) {
-        fastify.log.error({ err: error }, "Error updating call status");
+        fastify.log.error({ err: error }, "Error updating conversation status");
       }
     }
 

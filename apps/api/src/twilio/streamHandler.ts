@@ -172,20 +172,22 @@ export class TwilioStreamHandler {
       transcript: [],
     };
 
-    // Create call record in database
+    // Create conversation record in database
     try {
-      await prisma.call.create({
+      await prisma.conversation.create({
         data: {
           organizationId: org.id,
           fromNumber: data.customParameters?.From || "",
           toNumber: data.customParameters?.To || org.twilioNumber || "",
           twilioCallSid: callSid,
           startTime: new Date(),
+          status: "new",
+          isLead: false,
         },
       });
-      console.log("Call record created in DB:", callSid);
+      console.log("Conversation record created in DB:", callSid);
     } catch (error) {
-      console.error("Error creating call record:", error);
+      console.error("Error creating conversation record:", error);
     }
 
     // Initialize OpenAI bridge
@@ -313,31 +315,33 @@ export class TwilioStreamHandler {
       }
     }
 
-    // Update call record
+    // Update conversation record
     if (this.callSession) {
       try {
-        const call = await prisma.call.findUnique({
+        const conversation = await prisma.conversation.findUnique({
           where: { twilioCallSid: this.callSession.callSid },
         });
 
-        if (call) {
+        if (conversation) {
           const duration = Math.floor(
-            (new Date().getTime() - call.startTime.getTime()) / 1000
+            (new Date().getTime() - conversation.startTime.getTime()) / 1000
           );
 
-          await prisma.call.update({
-            where: { id: call.id },
+          await prisma.conversation.update({
+            where: { id: conversation.id },
             data: {
               endTime: new Date(),
               durationSeconds: duration,
               transcript: this.callSession.transcript.join("\n"),
               // Generate summary if we have transcript
               summary: this.generateSummary(this.callSession.transcript),
+              // If it's a very short call, mark as missed
+              status: duration < 5 ? "missed" : conversation.status,
             },
           });
         }
       } catch (error) {
-        console.error("Error updating call record:", error);
+        console.error("Error updating conversation record:", error);
       }
     }
 
