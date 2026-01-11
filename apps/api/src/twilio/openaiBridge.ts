@@ -349,50 +349,13 @@ export class OpenAIBridge {
         console.log(`📊 After Resample (8kHz): RMS=${afterResampleStats.rms.toFixed(1)}, Peak=${afterResampleStats.peak}, DC=${afterResampleStats.dcOffset.toFixed(1)}, Range=${afterResampleStats.dynamicRange.toFixed(2)}dB`);
       }
       
-      // Bandpass filter for optimal phone call clarity (300Hz-3400Hz speech range)
-      // Removes low-frequency hum (<300Hz) and high-frequency noise (>3400Hz) that causes static
-      // Phone calls use 300-3400Hz range for speech - this removes out-of-band noise
-      const sampleRate = 8000;
-      
-      // High-pass filter: Remove frequencies below 300Hz (phone line hum, rumble)
-      // For 8kHz sample rate: fc = 300Hz, RC = 1/(2*π*300) ≈ 0.00053s
-      // alpha = RC / (RC + 1/sampleRate) = 0.00053 / (0.00053 + 0.000125) ≈ 0.809
-      const alphaHP = 0.81; // High-pass filter coefficient for ~300Hz cutoff
-      let prevInputHP = 0;
-      let prevOutputHP = 0;
-      
-      // Low-pass filter: Remove frequencies above 3400Hz (high-frequency noise, aliasing artifacts)
-      // For 8kHz sample rate: fc = 3400Hz, RC = 1/(2*π*3400) ≈ 0.000047s
-      // alpha = RC / (RC + 1/sampleRate) = 0.000047 / (0.000047 + 0.000125) ≈ 0.273
-      const alphaLP = 0.27; // Low-pass filter coefficient for ~3400Hz cutoff
-      let prevOutputLP = 0;
-      
-      const filtered = Buffer.from(pcm16Buffer8k);
-      for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
-        const sample = pcm16Buffer8k.readInt16LE(i);
-        
-        // Apply high-pass filter first (removes low-frequency noise)
-        const hpOutput = alphaHP * (prevOutputHP + sample - prevInputHP);
-        prevInputHP = sample;
-        prevOutputHP = hpOutput;
-        
-        // Apply low-pass filter (removes high-frequency noise/static)
-        const lpOutput = alphaLP * hpOutput + (1 - alphaLP) * prevOutputLP;
-        prevOutputLP = lpOutput;
-        
-        filtered.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(lpOutput))), i);
-      }
-      pcm16Buffer8k = filtered;
-      const afterBandpassStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-after-bandpass");
-      if (this._audioChunkCount < 5) {
-        console.log(`📊 After Bandpass (300-3400Hz): RMS=${afterBandpassStats.rms.toFixed(1)}, Peak=${afterBandpassStats.peak}, DC=${afterBandpassStats.dcOffset.toFixed(1)}`);
-      }
-      
-      // Calculate sample count once for reuse
+      // Minimal processing approach: Let the codec handle audio naturally
+      // Phone codecs (G.711 μ-law) are designed for voice and handle it well
+      // Only apply essential processing - avoid over-filtering that can introduce artifacts
       const sampleCount = pcm16Buffer8k.length / 2;
       
-      // Remove DC offset for cleaner audio (only if significant)
-      // This helps prevent low-frequency artifacts and improves clarity
+      // Remove only significant DC offset (can cause artifacts)
+      // Only if offset is large enough to matter
       if (sampleCount > 0) {
         let sum = 0;
         const windowSize = Math.min(160, sampleCount); // ~20ms at 8kHz
@@ -401,12 +364,15 @@ export class OpenAIBridge {
         }
         const dcOffset = Math.round(sum / windowSize);
         
-        // Only remove if offset is significant (reduces unnecessary processing)
-        if (Math.abs(dcOffset) > 30) {
+        // Only remove if offset is significant (threshold increased to avoid over-processing)
+        if (Math.abs(dcOffset) > 100) {
           for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
             const sample = pcm16Buffer8k.readInt16LE(i);
             const corrected = sample - dcOffset;
             pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, corrected)), i);
+          }
+          if (this._audioChunkCount < 5) {
+            console.log(`📊 DC offset removed: ${dcOffset}`);
           }
         }
       }
@@ -753,9 +719,9 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           },
           turn_detection: {
             type: "server_vad",
-            threshold: 0.6, // Increased from 0.5 - requires more confidence before detecting speech
+            threshold: 0.7, // Increased threshold - requires higher confidence before detecting speech
             prefix_padding_ms: 300,
-            silence_duration_ms: 1200, // Increased from 500ms - wait longer (1.2 seconds) before responding
+            silence_duration_ms: 1500, // Increased to 1.5 seconds - wait longer before responding to prevent frequent prompts
           },
           tools: TOOL_SCHEMAS as any,
         },
