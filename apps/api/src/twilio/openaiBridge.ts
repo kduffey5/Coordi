@@ -339,10 +339,11 @@ export class OpenAIBridge {
       // Resample from 24kHz to 8kHz (simple weighted averaging)
       let pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
       
-      // Very light high-pass filter to remove low-frequency hum/noise (below ~80Hz)
-      // This removes common phone line hum without affecting speech clarity
-      // Uses first-order IIR high-pass filter with ~80Hz cutoff at 8kHz
-      const alpha = 0.95; // Filter coefficient for ~80Hz cutoff
+      // Gentle high-pass filter to remove low-frequency hum/noise (below ~100Hz)
+      // Optimized for phone call clarity - removes hum while preserving speech
+      // Uses first-order IIR high-pass filter with ~100Hz cutoff at 8kHz
+      // Slightly higher cutoff than before for better clarity
+      const alpha = 0.93; // Filter coefficient for ~100Hz cutoff (was 0.95 for 80Hz)
       let prevInput = 0;
       let prevOutput = 0;
       const filtered = Buffer.from(pcm16Buffer8k);
@@ -354,6 +355,27 @@ export class OpenAIBridge {
         filtered.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(filteredSample))), i);
       }
       pcm16Buffer8k = filtered;
+      
+      // Remove DC offset for cleaner audio (only if significant)
+      // This helps prevent low-frequency artifacts and improves clarity
+      const sampleCount = pcm16Buffer8k.length / 2;
+      if (sampleCount > 0) {
+        let sum = 0;
+        const windowSize = Math.min(160, sampleCount); // ~20ms at 8kHz
+        for (let i = 0; i < windowSize; i++) {
+          sum += pcm16Buffer8k.readInt16LE(i * 2);
+        }
+        const dcOffset = Math.round(sum / windowSize);
+        
+        // Only remove if offset is significant (reduces unnecessary processing)
+        if (Math.abs(dcOffset) > 30) {
+          for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
+            const sample = pcm16Buffer8k.readInt16LE(i);
+            const corrected = sample - dcOffset;
+            pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, corrected)), i);
+          }
+        }
+      }
       
       // Simple volume optimization: prevent clipping only
       // Keep it minimal - let the audio speak for itself
@@ -759,7 +781,7 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
 
   /**
    * Resample PCM16 audio from 24kHz to 8kHz (3:1 downsampling)
-   * Uses weighted averaging with anti-aliasing for crystal clear audio
+   * Uses improved weighted averaging with better anti-aliasing
    */
   private resample24kTo8k(pcm16Buffer: Buffer): Buffer {
     // 24kHz to 8kHz is 3:1 ratio - integer ratio
@@ -770,23 +792,25 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
     const targetSamples = Math.floor(sourceSamples / ratio);
     const targetBuffer = Buffer.allocUnsafe(targetSamples * 2);
     
-    // Use weighted averaging with a simple low-pass filter to reduce aliasing
-    // This provides better quality than simple averaging
+    // Improved weighted averaging with better anti-aliasing
+    // Use a smoother window function for better frequency response
     for (let i = 0; i < targetSamples; i++) {
       const sourceStart = i * ratio;
       
-      // Use weighted average with more weight on center sample (reduces aliasing)
-      // Weights: [0.25, 0.5, 0.25] for better frequency response
+      // Use triangular window weights for smoother downsampling: [0.2, 0.6, 0.2]
+      // This provides better anti-aliasing than simple averaging
       let sum = 0;
       let weightSum = 0;
       
       for (let j = 0; j < ratio && (sourceStart + j) < sourceSamples; j++) {
-        const weight = j === 1 ? 0.5 : 0.25; // Center sample gets more weight
+        // Triangular window: center sample gets most weight
+        const weight = j === 1 ? 0.6 : 0.2;
         const sample = pcm16Buffer.readInt16LE((sourceStart + j) * 2);
         sum += sample * weight;
         weightSum += weight;
       }
       
+      // Round to nearest integer for clean output
       const average = Math.round(sum / weightSum);
       
       // Clamp to 16-bit range
