@@ -546,9 +546,9 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           instructions: systemPrompt,
           voice: agentProfile.voice || "alloy",
           temperature: 0.8,
-          // Use g711_ulaw (μ-law) end-to-end - same codec Twilio uses
-          // This eliminates transcoding/resampling artifacts that cause static
-          input_audio_format: "g711_ulaw",
+          // Output: Use g711_ulaw (μ-law) - same codec Twilio uses (eliminates output transcoding artifacts)
+          // Input: Use PCM16 - Whisper transcription works better with PCM16 format
+          input_audio_format: "pcm16",
           output_audio_format: "g711_ulaw",
           input_audio_transcription: {
             model: "whisper-1",
