@@ -355,37 +355,64 @@ export class OpenAIBridge {
       }
       pcm16Buffer8k = filtered;
       
-      // Volume optimization: normalize if too quiet, limit if too loud
+      // Natural phone call volume and dynamic range processing
+      // Use gentle compression and normalization for consistent, natural levels
+      
+      // First pass: find peak and RMS levels for analysis
       let maxSample = 0;
+      let sumSquared = 0;
+      const sampleCount = pcm16Buffer8k.length / 2;
       for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
-        const absSample = Math.abs(pcm16Buffer8k.readInt16LE(i));
+        const sample = pcm16Buffer8k.readInt16LE(i);
+        const absSample = Math.abs(sample);
         if (absSample > maxSample) maxSample = absSample;
+        sumSquared += sample * sample;
       }
+      const rms = Math.sqrt(sumSquared / sampleCount); // RMS level
       
+      // Target levels for natural phone call sound
+      const targetPeak = 22938; // ~70% of max - natural phone call level
+      const targetRMS = 16384; // ~50% of max - good average level
+      const minThreshold = 9830; // ~30% of max - below this, boost
+      const maxThreshold = 27853; // ~85% of max - above this, compress
+      
+      // Calculate base gain (normalize to target RMS if quiet, or compress if loud)
       let gain = 1.0;
-      
-      // If audio is too quiet, gently boost it (but don't over-amplify)
-      const minThreshold = 8192; // ~25% of max - if below this, boost slightly
-      const targetLevel = 19661; // ~60% of max - good clarity level
-      if (maxSample > 0 && maxSample < minThreshold) {
-        gain = Math.min(2.0, targetLevel / maxSample); // Max 2x boost to avoid noise
-      }
-      
-      // If audio is too loud, apply smooth compression
-      const maxThreshold = 27853; // ~85% of max
-      const maxOutput = 29491; // ~90% of max (headroom)
-      if (maxSample * gain > maxThreshold) {
-        // Smooth compression: gain reduction starts at threshold
-        const ratio = ((maxSample * gain) - maxThreshold) / (32767 - maxThreshold);
-        gain = (maxThreshold + (maxOutput - maxThreshold) * (1 - ratio * ratio)) / maxSample;
-      }
-      
-      // Apply gain if needed
-      if (gain !== 1.0) {
-        for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
-          const sample = Math.round(pcm16Buffer8k.readInt16LE(i) * gain);
-          pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), i);
+      if (maxSample > 0) {
+        if (rms < minThreshold) {
+          // Too quiet - normalize to target RMS (gentle boost)
+          gain = Math.min(2.5, targetRMS / (rms || 1));
+        } else if (maxSample > maxThreshold) {
+          // Too loud - compress to target peak (gentle reduction)
+          gain = targetPeak / maxSample;
+        } else if (rms < targetRMS * 0.7) {
+          // Moderate quietness - slight boost toward target
+          gain = Math.min(1.5, targetRMS / rms);
         }
+      }
+      
+      // Apply gain with gentle dynamic range compression for consistency
+      // Compression ratio: 2:1 for loud parts, transparent for quiet parts
+      const compressionThreshold = 16384; // ~50% of max
+      const compressionRatio = 2.0; // 2:1 compression
+      
+      for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
+        let sample = pcm16Buffer8k.readInt16LE(i);
+        
+        // Apply base gain
+        sample = Math.round(sample * gain);
+        
+        // Apply gentle compression to loud parts for consistent levels
+        const absSample = Math.abs(sample);
+        if (absSample > compressionThreshold) {
+          const excess = absSample - compressionThreshold;
+          const compressedExcess = excess / compressionRatio;
+          const compressedLevel = compressionThreshold + compressedExcess;
+          sample = Math.sign(sample) * Math.min(29491, compressedLevel); // Limit to ~90%
+        }
+        
+        // Clamp to valid range
+        pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), i);
       }
       
       // Convert PCM16 to MuLaw (clean, accurate encoding)
