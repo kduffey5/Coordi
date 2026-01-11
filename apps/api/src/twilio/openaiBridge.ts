@@ -258,7 +258,8 @@ export class OpenAIBridge {
         break;
 
       case "response.output_item.added":
-        // Function call item created - log it for debugging
+        // Log all output items to debug silent responses
+        console.log("📝 Response output item added:", JSON.stringify(message.item, null, 2).substring(0, 500));
         if (message.item?.type === "function_call") {
           console.log("🔧 Function call item added:", message.item.function_call?.name);
         }
