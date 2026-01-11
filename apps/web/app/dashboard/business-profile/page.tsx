@@ -501,10 +501,10 @@ export default function BusinessProfilePage() {
                   <Button type="button" onClick={addService}>Add Service</Button>
                 </CardContent>
               </Card>
-            </Tabs.Content>
+            </TabsContent>
 
             {/* Pricing Philosophy Tab */}
-            <Tabs.Content value="pricing">
+            <TabsContent value="pricing">
               <Card>
                 <CardHeader>
                   <CardTitle>Pricing Philosophy</CardTitle>
@@ -603,10 +603,10 @@ export default function BusinessProfilePage() {
                   </div>
                 </CardContent>
               </Card>
-            </Tabs.Content>
+            </TabsContent>
 
             {/* Local Knowledge Tab */}
-            <Tabs.Content value="knowledge">
+            <TabsContent value="knowledge">
               <Card>
                 <CardHeader>
                   <CardTitle>Local Knowledge</CardTitle>
@@ -691,10 +691,10 @@ export default function BusinessProfilePage() {
                   </div>
                 </CardContent>
               </Card>
-            </Tabs.Content>
+            </TabsContent>
 
             {/* Expert Mode Tab */}
-            <Tabs.Content value="expert">
+            <TabsContent value="expert">
               <Card>
                 <CardHeader>
                   <CardTitle>Lawn Care Expert Mode</CardTitle>

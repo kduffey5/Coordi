@@ -23,7 +23,7 @@ export default function CallsPage() {
   const loadCalls = async () => {
     try {
       const result = await api.getCalls(50, 0);
-      if (result.data) {
+      if (result.data && 'calls' in result.data) {
         setCalls(result.data.calls || []);
         setTotal(result.data.total || 0);
       }
