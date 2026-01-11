@@ -716,8 +716,10 @@ Your speaking style:`;
     return prompt;
   }
 
-  private scaleToWord(value: number, words: string[]): string {
-    const index = Math.floor((value / 100) * (words.length - 1));
+  private scaleToWord(value: number | null | undefined, words: string[]): string {
+    // Default to middle value (50) if value is null/undefined
+    const safeValue = value ?? 50;
+    const index = Math.floor((safeValue / 100) * (words.length - 1));
     return words[Math.min(index, words.length - 1)];
   }
 
