@@ -370,9 +370,11 @@ export class OpenAIBridge {
         console.log(`📊 After High-Pass: RMS=${afterHighPassStats.rms.toFixed(1)}, Peak=${afterHighPassStats.peak}, DC=${afterHighPassStats.dcOffset.toFixed(1)}`);
       }
       
+      // Calculate sample count once for reuse
+      const sampleCount = pcm16Buffer8k.length / 2;
+      
       // Remove DC offset for cleaner audio (only if significant)
       // This helps prevent low-frequency artifacts and improves clarity
-      const sampleCount = pcm16Buffer8k.length / 2;
       if (sampleCount > 0) {
         let sum = 0;
         const windowSize = Math.min(160, sampleCount); // ~20ms at 8kHz
@@ -395,7 +397,6 @@ export class OpenAIBridge {
       // Phone calls benefit from optimal volume: aim for -12dB to -6dB peak (about 50-75% of max)
       let maxSample = 0;
       let rmsSum = 0;
-      const sampleCount = pcm16Buffer8k.length / 2;
       
       for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
         const sample = pcm16Buffer8k.readInt16LE(i);
