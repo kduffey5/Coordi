@@ -557,9 +557,9 @@ Always be natural, friendly, and conversational. Speak at a normal human pace - 
           },
           turn_detection: {
             type: "server_vad",
-            threshold: 0.7, // Increased threshold - requires higher confidence before detecting speech
+            threshold: 0.7, // Higher confidence threshold
             prefix_padding_ms: 300,
-            silence_duration_ms: 1500, // Increased to 1.5 seconds - wait longer before responding to prevent frequent prompts
+            silence_duration_ms: 800, // Reduced to 800ms - respond faster when caller stops speaking
           },
           tools: TOOL_SCHEMAS as any,
         },
