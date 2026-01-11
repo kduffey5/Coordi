@@ -395,6 +395,22 @@ export class OpenAIBridge {
         }
       }
       
+      // Apply very subtle smoothing to reduce quantization artifacts
+      // This helps reduce any harshness from MuLaw encoding without affecting clarity
+      if (pcm16Buffer8k.length >= 6) {
+        const smoothedBuffer = Buffer.from(pcm16Buffer8k);
+        // Simple 3-sample moving average (very light smoothing)
+        for (let i = 2; i < pcm16Buffer8k.length - 2; i += 2) {
+          const prev = pcm16Buffer8k.readInt16LE(i - 2);
+          const curr = pcm16Buffer8k.readInt16LE(i);
+          const next = pcm16Buffer8k.readInt16LE(i + 2);
+          // Weighted average: 0.25, 0.5, 0.25 (very subtle)
+          const smoothedValue = Math.round(prev * 0.25 + curr * 0.5 + next * 0.25);
+          smoothedBuffer.writeInt16LE(Math.max(-32768, Math.min(32767, smoothedValue)), i);
+        }
+        pcm16Buffer8k = smoothedBuffer;
+      }
+      
       // Convert PCM16 to MuLaw (clean, accurate encoding)
       const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer8k);
       
