@@ -257,8 +257,15 @@ export class OpenAIBridge {
         }, 800);
         break;
 
+      case "response.output_item.added":
+        // Function call item created - log it for debugging
+        if (message.item?.type === "function_call") {
+          console.log("🔧 Function call item added:", message.item.function_call?.name);
+        }
+        break;
+
       case "response.function_call_arguments.done":
-        // Tool/function call from AI
+        // Tool/function call from AI - all arguments are ready
         this.handleToolCall(message);
         break;
 
@@ -281,10 +288,12 @@ export class OpenAIBridge {
         arguments: JSON.parse(functionCall.arguments || "{}"),
       };
 
-      console.log("Tool call received:", toolCall.name, toolCall.arguments);
+      console.log("🔧 Tool call received:", toolCall.name, toolCall.arguments);
 
       // Execute the tool
       const result = await this.onToolCall(toolCall);
+
+      console.log("✅ Tool call completed:", toolCall.name, "result:", JSON.stringify(result).substring(0, 200));
 
       // Send tool result back to OpenAI
       this.sendToOpenAI({
@@ -295,8 +304,15 @@ export class OpenAIBridge {
           output: JSON.stringify(result),
         },
       });
+
+      // CRITICAL: After sending tool result, we must explicitly trigger a new response
+      // Otherwise the agent will pause and wait indefinitely
+      console.log("🔄 Triggering new response after tool call...");
+      this.sendToOpenAI({
+        type: "response.create",
+      });
     } catch (error: any) {
-      console.error("Tool call error:", error);
+      console.error("❌ Tool call error:", error);
       // Send error back to OpenAI
       this.sendToOpenAI({
         type: "conversation.item.create",
@@ -305,6 +321,11 @@ export class OpenAIBridge {
           call_id: functionCall.id,
           output: JSON.stringify({ error: error.message || "Tool execution failed" }),
         },
+      });
+      
+      // Trigger response even on error so agent can continue the conversation
+      this.sendToOpenAI({
+        type: "response.create",
       });
     }
   }
