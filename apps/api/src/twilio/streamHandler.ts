@@ -223,13 +223,10 @@ export class TwilioStreamHandler {
     } catch (error) {
       console.error("Error initializing OpenAI bridge:", error);
       // Send error message to caller via Twilio
-      this.sendTwilioMessage({
-        event: "media",
-        streamSid: data.streamSid,
-        media: {
-          payload: Buffer.from("Sorry, I'm having trouble connecting. Please try again later.").toString("base64"),
-        },
-      });
+      // Don't send text as audio - it will sound like static/crackle
+      // Instead, just close the socket and let Twilio handle the error gracefully
+      console.error("Failed to initialize OpenAI bridge - closing stream");
+      this.socket.close();
     }
   }
 
