@@ -86,42 +86,43 @@ export default function BusinessProfilePage() {
     try {
       const result = await api.getBusinessProfile();
       if (result.data) {
-        setProfile(result.data);
+        const data = result.data as any;
+        setProfile(data);
         // Populate form fields from profile
-        if (result.data.companyInfo) {
-          setBusinessName(result.data.companyInfo.businessName || "");
-          setGreetingFormat(result.data.companyInfo.greetingFormat || "");
-          setPhoneNumber(result.data.companyInfo.phoneNumber || "");
-          setServiceHours(result.data.companyInfo.serviceHours || "");
-          setAfterHoursBehavior(result.data.companyInfo.afterHoursBehavior || "");
+        if (data.companyInfo) {
+          setBusinessName(data.companyInfo.businessName || "");
+          setGreetingFormat(data.companyInfo.greetingFormat || "");
+          setPhoneNumber(data.companyInfo.phoneNumber || "");
+          setServiceHours(data.companyInfo.serviceHours || "");
+          setAfterHoursBehavior(data.companyInfo.afterHoursBehavior || "");
         }
-        if (result.data.serviceAreaConfig) {
-          setZipCodes(result.data.serviceAreaConfig.zipCodes || []);
-          setCities(result.data.serviceAreaConfig.cities || []);
-          setOutOfAreaResponse(result.data.serviceAreaConfig.outOfAreaResponse || "");
+        if (data.serviceAreaConfig) {
+          setZipCodes(data.serviceAreaConfig.zipCodes || []);
+          setCities(data.serviceAreaConfig.cities || []);
+          setOutOfAreaResponse(data.serviceAreaConfig.outOfAreaResponse || "");
         }
-        if (result.data.servicesConfig) {
-          setServices(Array.isArray(result.data.servicesConfig) ? result.data.servicesConfig : []);
+        if (data.servicesConfig) {
+          setServices(Array.isArray(data.servicesConfig) ? data.servicesConfig : []);
         }
-        setPricingPhilosophy(result.data.pricingPhilosophy || "");
-        if (result.data.policiesConfig) {
-          setCancellationPolicy(result.data.policiesConfig.cancellationPolicy || "");
-          setReschedulePolicy(result.data.policiesConfig.reschedulePolicy || "");
-          setRainPolicy(result.data.policiesConfig.rainPolicy || "");
-          setPaymentTypes(result.data.policiesConfig.paymentTypes || []);
-          setPetGateAccess(result.data.policiesConfig.petGateAccess || "");
-          setSatisfactionGuarantee(result.data.policiesConfig.satisfactionGuarantee || "");
+        setPricingPhilosophy(data.pricingPhilosophy || "");
+        if (data.policiesConfig) {
+          setCancellationPolicy(data.policiesConfig.cancellationPolicy || "");
+          setReschedulePolicy(data.policiesConfig.reschedulePolicy || "");
+          setRainPolicy(data.policiesConfig.rainPolicy || "");
+          setPaymentTypes(data.policiesConfig.paymentTypes || []);
+          setPetGateAccess(data.policiesConfig.petGateAccess || "");
+          setSatisfactionGuarantee(data.policiesConfig.satisfactionGuarantee || "");
         }
-        if (result.data.localKnowledge) {
-          setLocalKnowledge(Array.isArray(result.data.localKnowledge) ? result.data.localKnowledge : []);
+        if (data.localKnowledge) {
+          setLocalKnowledge(Array.isArray(data.localKnowledge) ? data.localKnowledge : []);
         }
-        if (result.data.voiceBehavior) {
-          setTone(result.data.voiceBehavior.tone || "");
-          setEmpathy(result.data.voiceBehavior.empathy || "");
-          setPreferredWords(result.data.voiceBehavior.preferredWords || {});
-          setReferToTeamByName(result.data.voiceBehavior.referToTeamByName || false);
+        if (data.voiceBehavior) {
+          setTone(data.voiceBehavior.tone || "");
+          setEmpathy(data.voiceBehavior.empathy || "");
+          setPreferredWords(data.voiceBehavior.preferredWords || {});
+          setReferToTeamByName(data.voiceBehavior.referToTeamByName || false);
         }
-        setLawnExpertMode(result.data.lawnExpertMode || false);
+        setLawnExpertMode(data.lawnExpertMode || false);
       }
     } catch (error) {
       console.error("Error loading profile:", error);
