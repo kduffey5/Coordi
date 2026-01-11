@@ -330,146 +330,26 @@ export class OpenAIBridge {
     }
 
     try {
-      // OpenAI sends PCM16 audio at 24kHz (base64 encoded)
-      // Twilio expects MuLaw audio at 8kHz (base64 encoded)
-      // We need to: resample 24kHz → 8kHz, then convert PCM16 → MuLaw
+      // OpenAI sends g711_ulaw (μ-law) audio at 8kHz (base64 encoded)
+      // Twilio expects g711_ulaw (μ-law) audio at 8kHz (base64 encoded)
+      // No transcoding needed - just decode base64 and buffer
       
-      // Decode base64 PCM16 audio (24kHz)
-      const pcm16Buffer24k = Buffer.from(audioBase64, "base64");
+      const mulawBuffer = Buffer.from(audioBase64, "base64");
       
-      // Calculate initial audio stats for diagnostics
-      const initialStats = this.calculateAudioStats(pcm16Buffer24k, "24kHz-input");
-      if (this._audioChunkCount < 5) {
-        console.log(`📊 Audio Chunk #${this._audioChunkCount + 1} - Initial (24kHz): RMS=${initialStats.rms.toFixed(1)}, Peak=${initialStats.peak}, DC=${initialStats.dcOffset.toFixed(1)}, Range=${initialStats.dynamicRange.toFixed(2)}dB`);
+      // Log first few chunks for diagnostics
+      if (!this._audioChunkCount) this._audioChunkCount = 0;
+      this._audioChunkCount++;
+      
+      if (this._audioChunkCount <= 5) {
+        console.log(`📊 Output audio chunk #${this._audioChunkCount}: MuLaw ${mulawBuffer.length} bytes (g711_ulaw end-to-end)`);
       }
       
-      // Resample from 24kHz to 8kHz (improved weighted averaging)
-      let pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
-      const afterResampleStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-after-resample");
-      if (this._audioChunkCount < 5) {
-        console.log(`📊 After Resample (8kHz): RMS=${afterResampleStats.rms.toFixed(1)}, Peak=${afterResampleStats.peak}, DC=${afterResampleStats.dcOffset.toFixed(1)}, Range=${afterResampleStats.dynamicRange.toFixed(2)}dB`);
-      }
-      
-      // Minimal processing approach: Let the codec handle audio naturally
-      // Phone codecs (G.711 μ-law) are designed for voice and handle it well
-      // Only apply essential processing - avoid over-filtering that can introduce artifacts
-      const sampleCount = pcm16Buffer8k.length / 2;
-      
-      // Remove only significant DC offset (can cause artifacts)
-      // Only if offset is large enough to matter
-      if (sampleCount > 0) {
-        let sum = 0;
-        const windowSize = Math.min(160, sampleCount); // ~20ms at 8kHz
-        for (let i = 0; i < windowSize; i++) {
-          sum += pcm16Buffer8k.readInt16LE(i * 2);
-        }
-        const dcOffset = Math.round(sum / windowSize);
-        
-        // Only remove if offset is significant (threshold increased to avoid over-processing)
-        if (Math.abs(dcOffset) > 100) {
-          for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
-            const sample = pcm16Buffer8k.readInt16LE(i);
-            const corrected = sample - dcOffset;
-            pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, corrected)), i);
-          }
-          if (this._audioChunkCount < 5) {
-            console.log(`📊 DC offset removed: ${dcOffset}`);
-          }
-        }
-      }
-      
-      // Best practice: Smart gain staging - prevent clipping while maximizing clarity
-      // Phone calls benefit from optimal volume: aim for -12dB to -6dB peak (about 50-75% of max)
-      let maxSample = 0;
-      let rmsSum = 0;
-      
-      for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
-        const sample = pcm16Buffer8k.readInt16LE(i);
-        const absSample = Math.abs(sample);
-        if (absSample > maxSample) maxSample = absSample;
-        rmsSum += sample * sample;
-      }
-      
-      const rms = Math.sqrt(rmsSum / sampleCount);
-      const peakDb = 20 * Math.log10(maxSample / 32767);
-      const rmsDb = 20 * Math.log10(rms / 32767);
-      
-      // Target: -12dB peak (75% of max) for optimal phone call clarity
-      // This provides good volume without clipping risk
-      const targetPeakDb = -12;
-      const targetPeak = Math.pow(10, targetPeakDb / 20) * 32767; // ~24575
-      const maxAllowedPeak = 29491; // ~90% of 32767 - absolute max
-      
-      let gainApplied = 1.0;
-      let needsGain = false;
-      
-      if (maxSample > maxAllowedPeak) {
-        // Clipping prevention: reduce gain if above 90%
-        gainApplied = maxAllowedPeak / maxSample;
-        needsGain = true;
-      } else if (maxSample < targetPeak * 0.5 && maxSample > 100) {
-        // Smart gain boost: increase quiet audio for better clarity (only if not too quiet)
-        // But be conservative - don't amplify noise
-        gainApplied = Math.min(2.0, targetPeak / maxSample); // Max 2x boost
-        needsGain = true;
-      }
-      
-      if (needsGain && gainApplied !== 1.0) {
-        for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
-          const sample = Math.round(pcm16Buffer8k.readInt16LE(i) * gainApplied);
-          pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), i);
-        }
-        if (this._audioChunkCount < 5) {
-          console.log(`🔊 Gain applied: ${(gainApplied * 100).toFixed(0)}% (Peak: ${peakDb.toFixed(1)}dB → ${(20 * Math.log10((maxSample * gainApplied) / 32767)).toFixed(1)}dB, RMS: ${rmsDb.toFixed(1)}dB)`);
-        }
-      }
-      
-      // Best practice: Skip aggressive smoothing - MuLaw encoding handles quantization naturally
-      // Phone codecs are designed to handle raw PCM well - extra smoothing can reduce clarity
-      // Only apply minimal smoothing if needed (disabled for now)
-      // if (pcm16Buffer8k.length >= 6) {
-      //   // Very subtle smoothing only if absolutely necessary
-      // }
-      
-      // Calculate final PCM16 stats before MuLaw encoding
-      const finalPcmStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-final");
-      if (this._audioChunkCount < 5) {
-        console.log(`📊 Final PCM16 (before MuLaw): RMS=${finalPcmStats.rms.toFixed(1)}, Peak=${finalPcmStats.peak}, DC=${finalPcmStats.dcOffset.toFixed(1)}, Range=${finalPcmStats.dynamicRange.toFixed(2)}dB`);
-      }
-      
-      // Convert PCM16 to MuLaw (clean, accurate encoding)
-      // Best practice: Use standard ITU-T G.711 μ-law encoding without dithering for phone calls
-      const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer8k);
-      
-      // Log MuLaw encoding stats (first few chunks only)
-      if (this._audioChunkCount < 5) {
-        let mulawNonZero = 0;
-        let mulawMax = 0;
-        for (let i = 0; i < mulawBuffer.length; i++) {
-          const byte = mulawBuffer[i];
-          if (byte !== 0xFF && byte !== 0x7F) mulawNonZero++; // 0xFF/0x7F = silence in MuLaw
-          if (byte > mulawMax) mulawMax = byte;
-        }
-        console.log(`📊 MuLaw output: ${mulawBuffer.length} bytes, non-silence=${mulawNonZero}/${mulawBuffer.length}, max=${mulawMax.toString(16)}h`);
-      }
-      
-      // Add to buffer queue for proper chunking
+      // Add to buffer queue for proper chunking (20ms frames)
       this._audioBuffer = Buffer.concat([this._audioBuffer, mulawBuffer]);
       
       // Start sending if not already sending
       if (!this._isSendingAudio) {
         this.startAudioStreaming();
-      }
-      
-      // Track chunk count for diagnostics
-      if (!this._audioChunkCount) this._audioChunkCount = 0;
-      this._audioChunkCount++;
-      
-      // Log summary every 50th chunk for monitoring
-      if (this._audioChunkCount % 50 === 0) {
-        const peakDb = 20 * Math.log10(finalPcmStats.peak / 32767);
-        const rmsDb = 20 * Math.log10(finalPcmStats.rms / 32767);
-        console.log(`📊 Audio Summary (Chunk #${this._audioChunkCount}): Peak=${peakDb.toFixed(1)}dB, RMS=${rmsDb.toFixed(1)}dB, Buffer=${this._audioBuffer.length} bytes`);
       }
     } catch (error) {
       console.error("Error processing audio for Twilio:", error);
@@ -666,11 +546,10 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
           instructions: systemPrompt,
           voice: agentProfile.voice || "alloy",
           temperature: 0.8,
-          // Twilio sends audio/x-mulaw (G.711 μ-law) at 8kHz
-          // OpenAI Realtime API outputs pcm16 at 24kHz (default)
-          // We'll resample from 24kHz to 8kHz before converting to MuLaw
-          input_audio_format: "pcm16",
-          output_audio_format: "pcm16",
+          // Use g711_ulaw (μ-law) end-to-end - same codec Twilio uses
+          // This eliminates transcoding/resampling artifacts that cause static
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
           input_audio_transcription: {
             model: "whisper-1",
           },
