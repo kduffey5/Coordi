@@ -336,8 +336,12 @@ export class OpenAIBridge {
       // Decode base64 PCM16 audio (24kHz)
       const pcm16Buffer24k = Buffer.from(audioBase64, "base64");
       
+      // Calculate initial audio stats for diagnostics
+      const initialStats = this.calculateAudioStats(pcm16Buffer24k, "24kHz-input");
+      
       // Resample from 24kHz to 8kHz (simple weighted averaging)
       let pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
+      const afterResampleStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-after-resample");
       
       // Gentle high-pass filter to remove low-frequency hum/noise (below ~100Hz)
       // Optimized for phone call clarity - removes hum while preserving speech
@@ -411,6 +415,9 @@ export class OpenAIBridge {
         pcm16Buffer8k = smoothedBuffer;
       }
       
+      // Calculate final PCM16 stats before MuLaw encoding
+      const finalPcmStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-final");
+      
       // Convert PCM16 to MuLaw (clean, accurate encoding)
       const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer8k);
       
@@ -422,11 +429,17 @@ export class OpenAIBridge {
         this.startAudioStreaming();
       }
       
-      // Log first few chunks
+      // Log diagnostic information periodically (every 10th chunk)
       if (!this._audioChunkCount) this._audioChunkCount = 0;
       this._audioChunkCount++;
-      if (this._audioChunkCount <= 3) {
-        console.log(`📤 Queued audio chunk #${this._audioChunkCount} (PCM16 24kHz: ${pcm16Buffer24k.length} bytes → MuLaw: ${mulawBuffer.length} bytes, buffer size: ${this._audioBuffer.length} bytes)`);
+      if (this._audioChunkCount % 10 === 1 || this._audioChunkCount <= 3) {
+        console.log(`📊 Audio Chunk #${this._audioChunkCount} Diagnostics:`, {
+          input_24k: { rms: initialStats.rms.toFixed(0), peak: initialStats.peak, dcOffset: initialStats.dcOffset },
+          after_resample: { rms: afterResampleStats.rms.toFixed(0), peak: afterResampleStats.peak, dcOffset: afterResampleStats.dcOffset },
+          final_pcm: { rms: finalPcmStats.rms.toFixed(0), peak: finalPcmStats.peak, dcOffset: finalPcmStats.dcOffset },
+          mulaw_size: mulawBuffer.length,
+          buffer_size: this._audioBuffer.length
+        });
       }
     } catch (error) {
       console.error("Error processing audio for Twilio:", error);
@@ -751,6 +764,35 @@ Always be natural, friendly, and conversational. Speak in English unless the cal
       } catch (error) {
         console.error("Error sending initial greeting:", error);
       }
+  }
+
+  /**
+   * Calculate audio statistics for diagnostics
+   * Returns RMS level, peak level, DC offset, and dynamic range
+   */
+  private calculateAudioStats(pcm16Buffer: Buffer, label: string): { rms: number; peak: number; dcOffset: number; dynamicRange: number } {
+    const sampleCount = pcm16Buffer.length / 2;
+    if (sampleCount === 0) {
+      return { rms: 0, peak: 0, dcOffset: 0, dynamicRange: 0 };
+    }
+    
+    let sum = 0;
+    let sumSquared = 0;
+    let peak = 0;
+    
+    for (let i = 0; i < sampleCount; i++) {
+      const sample = pcm16Buffer.readInt16LE(i * 2);
+      sum += sample;
+      sumSquared += sample * sample;
+      const absSample = Math.abs(sample);
+      if (absSample > peak) peak = absSample;
+    }
+    
+    const dcOffset = sum / sampleCount;
+    const rms = Math.sqrt(sumSquared / sampleCount);
+    const dynamicRange = peak > 0 ? 20 * Math.log10(rms / peak) : 0;
+    
+    return { rms, peak, dcOffset, dynamicRange };
   }
 
   /**
