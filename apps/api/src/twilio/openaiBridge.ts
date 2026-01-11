@@ -218,8 +218,8 @@ export class OpenAIBridge {
       case "input_audio_buffer.speech_started":
         console.log("Caller started speaking (barge-in detected)");
         // Stop current audio output to prevent overlapping streams
-        // This prevents static and feedback loops
-        this.stopAudioStreaming();
+        // Use clear message instead of flush to avoid artifacts
+        this.stopAudioStreaming({ clearTwilio: true });
         break;
 
       case "input_audio_buffer.speech_stopped":
