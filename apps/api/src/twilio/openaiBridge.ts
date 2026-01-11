@@ -349,25 +349,43 @@ export class OpenAIBridge {
         console.log(`📊 After Resample (8kHz): RMS=${afterResampleStats.rms.toFixed(1)}, Peak=${afterResampleStats.peak}, DC=${afterResampleStats.dcOffset.toFixed(1)}, Range=${afterResampleStats.dynamicRange.toFixed(2)}dB`);
       }
       
-      // Gentle high-pass filter to remove low-frequency hum/noise (below ~100Hz)
-      // Optimized for phone call clarity - removes hum while preserving speech
-      // Uses first-order IIR high-pass filter with ~100Hz cutoff at 8kHz
-      // Best practice: High-pass filter to remove phone line artifacts while preserving voice (80-3400Hz is optimal for speech)
-      const alpha = 0.93; // Filter coefficient for ~100Hz cutoff
-      let prevInput = 0;
-      let prevOutput = 0;
+      // Bandpass filter for optimal phone call clarity (300Hz-3400Hz speech range)
+      // Removes low-frequency hum (<300Hz) and high-frequency noise (>3400Hz) that causes static
+      // Phone calls use 300-3400Hz range for speech - this removes out-of-band noise
+      const sampleRate = 8000;
+      
+      // High-pass filter: Remove frequencies below 300Hz (phone line hum, rumble)
+      // For 8kHz sample rate: fc = 300Hz, RC = 1/(2*π*300) ≈ 0.00053s
+      // alpha = RC / (RC + 1/sampleRate) = 0.00053 / (0.00053 + 0.000125) ≈ 0.809
+      const alphaHP = 0.81; // High-pass filter coefficient for ~300Hz cutoff
+      let prevInputHP = 0;
+      let prevOutputHP = 0;
+      
+      // Low-pass filter: Remove frequencies above 3400Hz (high-frequency noise, aliasing artifacts)
+      // For 8kHz sample rate: fc = 3400Hz, RC = 1/(2*π*3400) ≈ 0.000047s
+      // alpha = RC / (RC + 1/sampleRate) = 0.000047 / (0.000047 + 0.000125) ≈ 0.273
+      const alphaLP = 0.27; // Low-pass filter coefficient for ~3400Hz cutoff
+      let prevOutputLP = 0;
+      
       const filtered = Buffer.from(pcm16Buffer8k);
       for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
         const sample = pcm16Buffer8k.readInt16LE(i);
-        const filteredSample = alpha * (prevOutput + sample - prevInput);
-        prevInput = sample;
-        prevOutput = filteredSample;
-        filtered.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(filteredSample))), i);
+        
+        // Apply high-pass filter first (removes low-frequency noise)
+        const hpOutput = alphaHP * (prevOutputHP + sample - prevInputHP);
+        prevInputHP = sample;
+        prevOutputHP = hpOutput;
+        
+        // Apply low-pass filter (removes high-frequency noise/static)
+        const lpOutput = alphaLP * hpOutput + (1 - alphaLP) * prevOutputLP;
+        prevOutputLP = lpOutput;
+        
+        filtered.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(lpOutput))), i);
       }
       pcm16Buffer8k = filtered;
-      const afterHighPassStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-after-highpass");
+      const afterBandpassStats = this.calculateAudioStats(pcm16Buffer8k, "8kHz-after-bandpass");
       if (this._audioChunkCount < 5) {
-        console.log(`📊 After High-Pass: RMS=${afterHighPassStats.rms.toFixed(1)}, Peak=${afterHighPassStats.peak}, DC=${afterHighPassStats.dcOffset.toFixed(1)}`);
+        console.log(`📊 After Bandpass (300-3400Hz): RMS=${afterBandpassStats.rms.toFixed(1)}, Peak=${afterBandpassStats.peak}, DC=${afterBandpassStats.dcOffset.toFixed(1)}`);
       }
       
       // Calculate sample count once for reuse
