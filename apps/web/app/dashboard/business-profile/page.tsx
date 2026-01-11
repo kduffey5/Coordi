@@ -686,7 +686,7 @@ export default function BusinessProfilePage() {
                     <Checkbox
                       id="referToTeamByName"
                       checked={referToTeamByName}
-                      onCheckedChange={(checked) => setReferToTeamByName(checked === true)}
+                      onChange={(e) => setReferToTeamByName(e.target.checked)}
                     />
                     <Label htmlFor="referToTeamByName">Refer to team by name</Label>
                   </div>
@@ -706,7 +706,7 @@ export default function BusinessProfilePage() {
                     <Checkbox
                       id="lawnExpertMode"
                       checked={lawnExpertMode}
-                      onCheckedChange={(checked) => setLawnExpertMode(checked === true)}
+                      onChange={(e) => setLawnExpertMode(e.target.checked)}
                     />
                     <div>
                       <Label htmlFor="lawnExpertMode">Enable Lawn Care Expert Mode</Label>
