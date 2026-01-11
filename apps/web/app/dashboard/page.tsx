@@ -101,9 +101,8 @@ export default function DashboardPage() {
           </div>
 
           {/* Quick Links */}
-          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <LinkCard href="/conversations" title="Conversations" description="View all conversations" />
-            <LinkCard href="/conversations?filter=lead" title="Leads" description="View leads" />
             <LinkCard href="/agent" title="Agent Tuning Studio" description="Configure AI agent" />
             <LinkCard href="/dashboard/business-profile" title="Business Profile" description="Configure business info" />
           </div>
