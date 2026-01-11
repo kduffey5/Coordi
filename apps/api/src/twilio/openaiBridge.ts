@@ -337,26 +337,58 @@ export class OpenAIBridge {
       const pcm16Buffer24k = Buffer.from(audioBase64, "base64");
       
       // Resample from 24kHz to 8kHz (simple weighted averaging)
-      const pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
+      let pcm16Buffer8k = this.resample24kTo8k(pcm16Buffer24k);
       
-      // Simple soft limiter to prevent clipping (only if needed)
-      // Check peak amplitude and reduce if too high
+      // Very light high-pass filter to remove low-frequency hum/noise (below ~80Hz)
+      // This removes common phone line hum without affecting speech clarity
+      // Uses first-order IIR high-pass filter with ~80Hz cutoff at 8kHz
+      const alpha = 0.95; // Filter coefficient for ~80Hz cutoff
+      let prevInput = 0;
+      let prevOutput = 0;
+      const filtered = Buffer.from(pcm16Buffer8k);
+      for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
+        const sample = pcm16Buffer8k.readInt16LE(i);
+        const filteredSample = alpha * (prevOutput + sample - prevInput);
+        prevInput = sample;
+        prevOutput = filteredSample;
+        filtered.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(filteredSample))), i);
+      }
+      pcm16Buffer8k = filtered;
+      
+      // Volume optimization: normalize if too quiet, limit if too loud
       let maxSample = 0;
       for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
         const absSample = Math.abs(pcm16Buffer8k.readInt16LE(i));
         if (absSample > maxSample) maxSample = absSample;
       }
       
-      // Only apply gain reduction if clipping would occur (>90% of max)
-      if (maxSample > 29491) { // ~90% of 32767
-        const gain = 29491 / maxSample;
+      let gain = 1.0;
+      
+      // If audio is too quiet, gently boost it (but don't over-amplify)
+      const minThreshold = 8192; // ~25% of max - if below this, boost slightly
+      const targetLevel = 19661; // ~60% of max - good clarity level
+      if (maxSample > 0 && maxSample < minThreshold) {
+        gain = Math.min(2.0, targetLevel / maxSample); // Max 2x boost to avoid noise
+      }
+      
+      // If audio is too loud, apply smooth compression
+      const maxThreshold = 27853; // ~85% of max
+      const maxOutput = 29491; // ~90% of max (headroom)
+      if (maxSample * gain > maxThreshold) {
+        // Smooth compression: gain reduction starts at threshold
+        const ratio = ((maxSample * gain) - maxThreshold) / (32767 - maxThreshold);
+        gain = (maxThreshold + (maxOutput - maxThreshold) * (1 - ratio * ratio)) / maxSample;
+      }
+      
+      // Apply gain if needed
+      if (gain !== 1.0) {
         for (let i = 0; i < pcm16Buffer8k.length; i += 2) {
           const sample = Math.round(pcm16Buffer8k.readInt16LE(i) * gain);
           pcm16Buffer8k.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), i);
         }
       }
       
-      // Convert PCM16 to MuLaw (no extra processing - keep it simple)
+      // Convert PCM16 to MuLaw (clean, accurate encoding)
       const mulawBuffer = this.pcm16ToMulaw(pcm16Buffer8k);
       
       // Add to buffer queue for proper chunking
